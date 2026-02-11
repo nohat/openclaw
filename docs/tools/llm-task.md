@@ -87,6 +87,149 @@ Returns `details.json` containing the parsed JSON (and validates against
 
 ## Examples
 
+### Direct HTTP invocation (recommended)
+
+Invoke the tool directly via the OpenClaw Gateway's `/tools/invoke` endpoint without requiring an agent turn:
+
+```bash
+curl -X POST http://localhost:18789/tools/invoke \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer YOUR_GATEWAY_TOKEN" \
+  -d '{
+    "tool": "llm-task",
+    "action": "json",
+    "sessionKey": "main",
+    "args": {
+      "prompt": "Given the input email, return intent and draft.",
+      "input": {
+        "subject": "Hello",
+        "body": "Can you help?"
+      },
+      "schema": {
+        "type": "object",
+        "properties": {
+          "intent": { "type": "string" },
+          "draft": { "type": "string" }
+        },
+        "required": ["intent", "draft"],
+        "additionalProperties": false
+      }
+    }
+  }'
+```
+
+**Response:**
+```json
+{
+  "ok": true,
+  "result": {
+    "content": [
+      {
+        "type": "text",
+        "text": "{\n  \"intent\": \"request_assistance\",\n  \"draft\": \"...\"\n}"
+      }
+    ],
+    "details": {
+      "json": {
+        "intent": "request_assistance",
+        "draft": "..."
+      },
+      "provider": "openai-codex",
+      "model": "gpt-4"
+    }
+  }
+}
+```
+
+#### Classification task
+
+```bash
+curl -X POST http://localhost:18789/tools/invoke \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer YOUR_GATEWAY_TOKEN" \
+  -d '{
+    "tool": "llm-task",
+    "action": "json",
+    "sessionKey": "main",
+    "args": {
+      "prompt": "Classify this support ticket into one of: bug, feature_request, question, or complaint",
+      "input": {
+        "subject": "Login fails",
+        "body": "I cannot log into the app"
+      },
+      "schema": {
+        "type": "object",
+        "properties": {
+          "category": {
+            "type": "string",
+            "enum": ["bug", "feature_request", "question", "complaint"]
+          },
+          "confidence": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1
+          }
+        },
+        "required": ["category", "confidence"]
+      }
+    }
+  }'
+```
+
+#### Extract structured data
+
+```bash
+curl -X POST http://localhost:18789/tools/invoke \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer YOUR_GATEWAY_TOKEN" \
+  -d '{
+    "tool": "llm-task",
+    "action": "json",
+    "sessionKey": "main",
+    "args": {
+      "prompt": "Extract contact information from this email signature",
+      "input": {
+        "signature": "John Doe\\nSenior Engineer\\njohn@example.com\\n+1-555-0123"
+      },
+      "schema": {
+        "type": "object",
+        "properties": {
+          "name": { "type": "string" },
+          "title": { "type": "string" },
+          "email": { "type": "string" },
+          "phone": { "type": "string" }
+        }
+      }
+    }
+  }'
+```
+
+#### Override provider and model
+
+```bash
+curl -X POST http://localhost:18789/tools/invoke \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer YOUR_GATEWAY_TOKEN" \
+  -d '{
+    "tool": "llm-task",
+    "action": "json",
+    "sessionKey": "main",
+    "args": {
+      "prompt": "Summarize this article in 2-3 sentences",
+      "input": { "text": "Long article text here..." },
+      "provider": "anthropic",
+      "model": "claude-opus-4",
+      "maxTokens": 200
+    }
+  }'
+```
+
+**Notes:**
+- Replace `YOUR_GATEWAY_TOKEN` with your actual gateway token (configured via `gateway.auth.token` or env var `OPENCLAW_GATEWAY_TOKEN`)
+- Replace `http://localhost:18789` with your gateway address if different
+- The `sessionKey` determines which agent configuration to use (defaults to `"main"`)
+- Set `"dryRun": true` in the request body to validate without executing
+
 ### From Lobster workflows
 
 Invoke from a Lobster pipeline using `openclaw.invoke`:
@@ -110,72 +253,37 @@ openclaw.invoke --tool llm-task --action json --args-json '{
 }'
 ```
 
-### From the command line via agent
-
-You can also invoke the tool by asking the agent to use it:
-
-#### Basic classification task
-
-```bash
-openclaw agent --message "Use llm-task to classify this email as urgent or normal: 'Server is down!'"
-```
-
-#### Structured output with schema
-
-```bash
-openclaw agent --message "Use llm-task to analyze this customer feedback and return a JSON object with sentiment (positive/negative/neutral) and priority (high/medium/low) fields: 'Your product is amazing but shipping was slow.'"
-```
-
-#### Summarization task
-
-```bash
-openclaw agent --message "Use llm-task to summarize this text into 2-3 sentences: 'Long article text here...'"
-```
-
-### Direct invocation (via agent session)
-
-When the agent has access to the `llm-task` tool, you can ask it to invoke the tool directly. The agent will construct the appropriate tool call with schema validation.
-
-#### Email intent detection
-
-```bash
-openclaw agent --message "Call llm-task to detect intent from this email: subject 'Meeting Request', body 'Can we meet tomorrow?'. Return JSON with intent and suggested_action fields."
-```
-
-#### Content classification
-
-```bash
-openclaw agent --message "Use llm-task to classify this support ticket into category (bug/feature/question) and urgency (high/medium/low): 'Login button not working on mobile app'"
-```
-
-#### Draft generation
-
-```bash
-openclaw agent --message "Use llm-task to draft a response to this customer inquiry. Input: 'When will the new feature be available?' Return JSON with draft and tone fields."
-```
-
-### Using custom provider and model
-
-Override the default provider/model:
-
-```bash
-openclaw agent --message "Use llm-task with provider 'anthropic' and model 'claude-opus-4' to analyze this code review comment and suggest improvements"
-```
-
-### Working with JSON schema validation
-
-Request strict schema validation:
-
-```bash
-openclaw agent --message "Use llm-task to extract meeting details from this text: 'Team standup tomorrow at 10am in room 305'. The output MUST match this schema: {type: object, properties: {date: {type: string}, time: {type: string}, location: {type: string}}, required: [date, time, location]}"
-```
-
 ## Common patterns
 
 ### Classification workflows
 
 Use llm-task to categorize content before routing or processing:
 
+**HTTP:**
+```bash
+curl -X POST http://localhost:18789/tools/invoke \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer YOUR_GATEWAY_TOKEN" \
+  -d '{
+    "tool": "llm-task",
+    "action": "json",
+    "sessionKey": "main",
+    "args": {
+      "prompt": "Classify this support ticket into one of: bug, feature_request, question, or complaint",
+      "input": {"subject": "Login fails", "body": "I cannot log into the app"},
+      "schema": {
+        "type": "object",
+        "properties": {
+          "category": {"type": "string", "enum": ["bug", "feature_request", "question", "complaint"]},
+          "confidence": {"type": "number", "minimum": 0, "maximum": 1}
+        },
+        "required": ["category", "confidence"]
+      }
+    }
+  }'
+```
+
+**Lobster:**
 ```lobster
 # Classify support tickets and route based on category
 openclaw.invoke --tool llm-task --action json --args-json '{
@@ -196,6 +304,32 @@ openclaw.invoke --tool llm-task --action json --args-json '{
 
 Extract structured data from unstructured text:
 
+**HTTP:**
+```bash
+curl -X POST http://localhost:18789/tools/invoke \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer YOUR_GATEWAY_TOKEN" \
+  -d '{
+    "tool": "llm-task",
+    "action": "json",
+    "sessionKey": "main",
+    "args": {
+      "prompt": "Extract contact information from this email signature",
+      "input": {"signature": "John Doe\\nSenior Engineer\\njohn@example.com\\n+1-555-0123"},
+      "schema": {
+        "type": "object",
+        "properties": {
+          "name": {"type": "string"},
+          "title": {"type": "string"},
+          "email": {"type": "string"},
+          "phone": {"type": "string"}
+        }
+      }
+    }
+  }'
+```
+
+**Lobster:**
 ```lobster
 # Extract contact info from email signature
 openclaw.invoke --tool llm-task --action json --args-json '{
@@ -217,6 +351,41 @@ openclaw.invoke --tool llm-task --action json --args-json '{
 
 Transform content from one format to another:
 
+**HTTP:**
+```bash
+curl -X POST http://localhost:18789/tools/invoke \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer YOUR_GATEWAY_TOKEN" \
+  -d '{
+    "tool": "llm-task",
+    "action": "json",
+    "sessionKey": "main",
+    "args": {
+      "prompt": "Convert these meeting notes into a list of action items with owner and deadline",
+      "input": {"notes": "Alice to review PR by Friday. Bob will update docs next week."},
+      "schema": {
+        "type": "object",
+        "properties": {
+          "actionItems": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "task": {"type": "string"},
+                "owner": {"type": "string"},
+                "deadline": {"type": "string"}
+              },
+              "required": ["task", "owner"]
+            }
+          }
+        },
+        "required": ["actionItems"]
+      }
+    }
+  }'
+```
+
+**Lobster:**
 ```lobster
 # Convert meeting notes to action items
 openclaw.invoke --tool llm-task --action json --args-json '{
