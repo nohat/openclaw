@@ -176,6 +176,39 @@ export function injectHistoryImagesIntoMessages(
   return didMutate;
 }
 
+type SessionTreeEntryLike = {
+  id: string;
+  parentId: string | null;
+  type: string;
+  message?: { role?: string };
+};
+
+function listRecoverableOrphanUserLeafIds(
+  sessionManager: Pick<SessionManager, "getEntries">,
+): string[] {
+  const entries = sessionManager.getEntries() as SessionTreeEntryLike[];
+  const nonLabelChildCounts = new Map<string, number>();
+
+  for (const entry of entries) {
+    if (typeof entry.parentId !== "string") {
+      continue;
+    }
+    if (entry.type === "label") {
+      continue;
+    }
+    nonLabelChildCounts.set(entry.parentId, (nonLabelChildCounts.get(entry.parentId) ?? 0) + 1);
+  }
+
+  return entries
+    .filter(
+      (entry) =>
+        entry.type === "message" &&
+        entry.message?.role === "user" &&
+        (nonLabelChildCounts.get(entry.id) ?? 0) === 0,
+    )
+    .map((entry) => entry.id);
+}
+
 export async function resolvePromptBuildHookResult(params: {
   prompt: string;
   messages: unknown[];
@@ -1074,20 +1107,29 @@ export async function runEmbeddedAttempt(
           messages: activeSession.messages,
         });
 
-        // Repair orphaned trailing user messages so new prompts don't violate role ordering.
-        const leafEntry = sessionManager.getLeafEntry();
-        if (leafEntry?.type === "message" && leafEntry.message.role === "user") {
-          if (leafEntry.parentId) {
-            sessionManager.branch(leafEntry.parentId);
-          } else {
-            sessionManager.resetLeaf();
-          }
+        const activeLeafMessage = activeSession.messages[activeSession.messages.length - 1];
+        if (activeLeafMessage?.role === "user") {
+          log.warn(
+            `Recovering orphaned active-branch user message before new prompt. ` +
+              `runId=${params.runId} sessionId=${params.sessionId}`,
+          );
+          await abortable(activeSession.agent.continue());
+          await abortable(waitForCompactionRetry());
+        }
+
+        // Recover user-message leaves left behind when a process dies after writing
+        // the user turn but before the agent starts/responses are appended.
+        const orphanUserLeafIds = listRecoverableOrphanUserLeafIds(sessionManager);
+        for (const orphanUserLeafId of orphanUserLeafIds) {
+          sessionManager.branch(orphanUserLeafId);
           const sessionContext = sessionManager.buildSessionContext();
           activeSession.agent.replaceMessages(sessionContext.messages);
           log.warn(
-            `Removed orphaned user message to prevent consecutive user turns. ` +
-              `runId=${params.runId} sessionId=${params.sessionId}`,
+            `Recovering orphaned user message before new prompt. ` +
+              `runId=${params.runId} sessionId=${params.sessionId} orphanId=${orphanUserLeafId}`,
           );
+          await abortable(activeSession.agent.continue());
+          await abortable(waitForCompactionRetry());
         }
 
         try {

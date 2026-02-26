@@ -143,23 +143,42 @@ const nextRunId = (prefix = "run-embedded-test") => `${prefix}-${++runCounter}`;
 const nextSessionKey = () => `agent:test:embedded:${nextRunId("session-key")}`;
 const immediateEnqueue = async <T>(task: () => Promise<T>) => task();
 
-const runWithOrphanedSingleUserMessage = async (text: string, sessionKey: string) => {
+const runWithOrphanedSingleUserMessage = async (params: {
+  orphanText: string;
+  nextPrompt: string;
+  sessionKey: string;
+}) => {
   const sessionFile = nextSessionFile();
   const sessionManager = SessionManager.open(sessionFile);
   sessionManager.appendMessage({
     role: "user",
-    content: [{ type: "text", text }],
+    content: [{ type: "text", text: "seed user" }],
+    timestamp: Date.now(),
+  });
+  sessionManager.appendMessage({
+    role: "assistant",
+    content: [{ type: "text", text: "seed assistant" }],
+    stopReason: "stop",
+    api: "openai-responses",
+    provider: "openai",
+    model: "mock-1",
+    usage: createMockUsage(1, 1),
+    timestamp: Date.now(),
+  });
+  sessionManager.appendMessage({
+    role: "user",
+    content: [{ type: "text", text: params.orphanText }],
     timestamp: Date.now(),
   });
 
   const cfg = makeOpenAiConfig(["mock-1"]);
-  return await runEmbeddedPiAgent({
+  const result = await runEmbeddedPiAgent({
     sessionId: "session:test",
-    sessionKey,
+    sessionKey: params.sessionKey,
     sessionFile,
     workspaceDir,
     config: cfg,
-    prompt: "hello",
+    prompt: params.nextPrompt,
     provider: "openai",
     model: "mock-1",
     timeoutMs: 5_000,
@@ -167,6 +186,7 @@ const runWithOrphanedSingleUserMessage = async (text: string, sessionKey: string
     runId: nextRunId("orphaned-user"),
     enqueue: immediateEnqueue,
   });
+  return { result, sessionFile };
 };
 
 const textFromContent = (content: unknown) => {
@@ -194,6 +214,13 @@ const readSessionMessages = async (sessionFile: string) => {
     .map(
       (entry) => (entry as { message?: { role?: string; content?: unknown } }).message,
     ) as Array<{ role?: string; content?: unknown }>;
+};
+
+type TranscriptMessageEntry = {
+  type: "message";
+  id?: string;
+  parentId?: string | null;
+  message?: { role?: string; content?: unknown };
 };
 
 const runDefaultEmbeddedTurn = async (sessionFile: string, prompt: string, sessionKey: string) => {
@@ -289,10 +316,69 @@ describe("runEmbeddedPiAgent", () => {
     },
   );
 
-  it("repairs orphaned user messages and continues", async () => {
-    const result = await runWithOrphanedSingleUserMessage("orphaned user", nextSessionKey());
+  it("recovers orphaned user turn before processing a new post-restart message", async () => {
+    const { result, sessionFile } = await runWithOrphanedSingleUserMessage({
+      orphanText: "orphaned user",
+      nextPrompt: "hello after restart",
+      sessionKey: nextSessionKey(),
+    });
 
     expect(result.meta.error).toBeUndefined();
     expect(result.payloads?.length ?? 0).toBeGreaterThan(0);
+
+    const allEntries = await readSessionEntries(sessionFile);
+    const messageEntries = allEntries.filter(
+      (entry) => entry.type === "message",
+    ) as TranscriptMessageEntry[];
+    const orphanUser = messageEntries.find(
+      (entry) =>
+        entry.message?.role === "user" &&
+        textFromContent(entry.message?.content) === "orphaned user",
+    );
+    expect(orphanUser?.id).toBeTruthy();
+
+    const restartedUser = messageEntries.find(
+      (entry) =>
+        entry.message?.role === "user" &&
+        textFromContent(entry.message?.content) === "hello after restart",
+    );
+    expect(restartedUser?.id).toBeTruthy();
+
+    const restartedAssistant = messageEntries.find(
+      (entry) => entry.message?.role === "assistant" && entry.parentId === restartedUser?.id,
+    );
+    expect(restartedAssistant?.id).toBeTruthy();
+
+    const entryById = new Map(
+      allEntries
+        .filter((entry) => typeof (entry as { id?: unknown }).id === "string")
+        .map((entry) => [(entry as { id: string }).id, entry]),
+    );
+    let cursorId = restartedUser?.parentId ?? null;
+    let orphanBranchHasAssistant = false;
+    let orphanReached = false;
+    while (typeof cursorId === "string") {
+      const entry = entryById.get(cursorId) as
+        | {
+            id?: string;
+            type?: string;
+            parentId?: string | null;
+            message?: { role?: string };
+          }
+        | undefined;
+      if (!entry?.id) {
+        break;
+      }
+      if (entry.type === "message" && entry.message?.role === "assistant") {
+        orphanBranchHasAssistant = true;
+      }
+      if (entry.id === orphanUser?.id) {
+        orphanReached = true;
+        break;
+      }
+      cursorId = entry.parentId ?? null;
+    }
+    expect(orphanReached).toBe(true);
+    expect(orphanBranchHasAssistant).toBe(true);
   });
 });
