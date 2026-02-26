@@ -28,8 +28,9 @@ import { sendMessageSignal } from "../../signal/send.js";
 import type { sendMessageSlack } from "../../slack/send.js";
 import type { sendMessageTelegram } from "../../telegram/send.js";
 import type { sendMessageWhatsApp } from "../../web/outbound.js";
+import { ackDelivery, enqueueDelivery, failDelivery } from "../message-journal/outbound.js";
+import { isAbortError } from "../unhandled-rejections.js";
 import { throwIfAborted } from "./abort.js";
-import { ackDelivery, enqueueDelivery, failDelivery } from "./delivery-queue.js";
 import type { OutboundIdentity } from "./identity.js";
 import type { NormalizedOutboundPayload } from "./payloads.js";
 import { normalizeReplyPayloadsForDelivery } from "./payloads.js";
@@ -194,8 +195,6 @@ function createChannelOutboundContextBase(
   };
 }
 
-const isAbortError = (err: unknown): boolean => err instanceof Error && err.name === "AbortError";
-
 type DeliverOutboundPayloadsCoreParams = {
   cfg: OpenClawConfig;
   channel: Exclude<OutboundChannel, "none">;
@@ -276,6 +275,8 @@ export async function deliverOutboundPayloads(
   } catch (err) {
     if (queueId) {
       if (isAbortError(err)) {
+        // User-initiated aborts are terminal for this send attempt and should not
+        // be replayed from the journal after restart.
         await ackDelivery(queueId).catch(() => {});
       } else {
         await failDelivery(queueId, err instanceof Error ? err.message : String(err)).catch(

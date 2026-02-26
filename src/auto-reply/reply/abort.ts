@@ -16,6 +16,7 @@ import {
   updateSessionStore,
 } from "../../config/sessions.js";
 import { logVerbose } from "../../globals.js";
+import { abortProcessingInboundForSession } from "../../infra/message-journal/inbound.js";
 import { parseAgentSessionKey } from "../../routing/session-key.js";
 import { resolveCommandAuthorization } from "../command-auth.js";
 import { normalizeCommandBody, type CommandNormalizeOptions } from "../commands-registry.js";
@@ -330,6 +331,9 @@ export async function tryFastAbortFromMessage(params: {
         nextEntry.updatedAt = Date.now();
         nextStore[key] = nextEntry;
       });
+      // Mark any in-flight inbound journal entries for this session as 'aborted'
+      // so orphan recovery won't re-dispatch them after a restart.
+      abortProcessingInboundForSession(key);
     } else if (abortKey) {
       setAbortMemory(abortKey, true);
     }

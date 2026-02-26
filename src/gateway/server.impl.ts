@@ -4,6 +4,7 @@ import { getActiveEmbeddedRunCount } from "../agents/pi-embedded-runner/runs.js"
 import { registerSkillsChangeListener } from "../agents/skills/refresh.js";
 import { initSubagentRegistry } from "../agents/subagent-registry.js";
 import { getTotalPendingReplies } from "../auto-reply/reply/dispatcher-registry.js";
+import type { MsgContext } from "../auto-reply/templating.js";
 import type { CanvasHostServer } from "../canvas-host/server.js";
 import { type ChannelId, listChannelPlugins } from "../channels/plugins/index.js";
 import { formatCliCommand } from "../cli/command-format.js";
@@ -661,15 +662,129 @@ export async function startGatewayServer(
   // Recover pending outbound deliveries from previous crash/restart.
   if (!minimalTestGateway) {
     void (async () => {
-      const { recoverPendingDeliveries } = await import("../infra/outbound/delivery-queue.js");
+      const { migrateFileQueueToJournal, recoverPendingDeliveries } =
+        await import("../infra/message-journal/outbound.js");
       const { deliverOutboundPayloads } = await import("../infra/outbound/deliver.js");
       const logRecovery = log.child("delivery-recovery");
+      // One-time migration from old file-based queue (no-op if already migrated).
+      await migrateFileQueueToJournal();
       await recoverPendingDeliveries({
         deliver: deliverOutboundPayloads,
         log: logRecovery,
         cfg: cfgAtStart,
       });
     })().catch((err) => log.error(`Delivery recovery failed: ${String(err)}`));
+  }
+
+  // Recover orphaned inbound turns that were in-flight when gateway was killed.
+  if (!minimalTestGateway) {
+    void (async () => {
+      const {
+        findProcessingInbound,
+        completeInboundTurn,
+        recordInboundRecoveryFailure,
+        MAX_INBOUND_RECOVERY_ATTEMPTS,
+        pruneInboundJournal,
+        INBOUND_PRUNE_AGE_MS,
+      } = await import("../infra/message-journal/inbound.js");
+      const { dispatchRecoveredPendingReply } = await import("../auto-reply/dispatch.js");
+      const { createReplyDispatcher } = await import("../auto-reply/reply/reply-dispatcher.js");
+      const { deliverOutboundPayloads } = await import("../infra/outbound/deliver.js");
+      const logOrphan = log.child("orphan-recovery");
+
+      // Prune old completed rows to keep the journal small.
+      pruneInboundJournal(INBOUND_PRUNE_AGE_MS);
+
+      // Find turns still marked 'processing' — these are orphans from a crash.
+      // Skip very recent rows (minAgeMs=5s) in case a turn is still actively running.
+      const orphans = findProcessingInbound({ minAgeMs: 5_000 });
+      if (orphans.length === 0) {
+        return;
+      }
+      logOrphan.info(`Found ${orphans.length} orphaned inbound turn(s) — starting recovery`);
+
+      for (const row of orphans) {
+        if (row.recovery_attempts >= MAX_INBOUND_RECOVERY_ATTEMPTS) {
+          completeInboundTurn(row.id, "failed");
+          logOrphan.warn(
+            `Orphan turn ${row.id} already exceeded recovery attempts (${row.recovery_attempts}/${MAX_INBOUND_RECOVERY_ATTEMPTS}) — marking failed`,
+          );
+          continue;
+        }
+        try {
+          // Rebuild a minimal context from the stored routing payload.
+          const payload = JSON.parse(row.payload) as Record<string, unknown>;
+          const ctx: MsgContext = {
+            PendingReplyId: row.id,
+            SessionKey: row.session_key || undefined,
+            From: (payload.from as string | undefined) ?? (payload.user as string | undefined),
+            To: (payload.to as string | undefined) ?? (payload.chatId as string | undefined),
+            Body: payload.body as string | undefined,
+            BodyForAgent: payload.bodyForAgent as string | undefined,
+            BodyForCommands: payload.bodyForCommands as string | undefined,
+            RawBody: payload.rawBody as string | undefined,
+            CommandBody: payload.commandBody as string | undefined,
+            AccountId: (payload.accountId as string | undefined) || row.account_id || undefined,
+            MessageThreadId: payload.threadId as string | number | undefined,
+            Provider: payload.provider as string | undefined,
+            Surface: payload.surface as string | undefined,
+            OriginatingChannel: payload.originatingChannel as string | undefined,
+            OriginatingTo:
+              (payload.originatingTo as string | undefined) ??
+              (payload.chatId as string | undefined),
+            ChatType: payload.chatType as string | undefined,
+            Timestamp: payload.timestamp as number | undefined,
+            ConversationLabel: payload.conversationLabel as string | undefined,
+            GroupSubject: payload.groupSubject as string | undefined,
+            GroupChannel: payload.groupChannel as string | undefined,
+            GroupSpace: payload.groupSpace as string | undefined,
+            GroupMembers: payload.groupMembers as string | undefined,
+            HookMessages: payload.hookMessages as string[] | undefined,
+            CommandAuthorized: payload.commandAuthorized as boolean | undefined,
+            CommandSource: payload.commandSource as "text" | "native" | undefined,
+            CommandTargetSessionKey: payload.commandTargetSessionKey as string | undefined,
+            SenderId: payload.senderId as string | undefined,
+            SenderName:
+              (payload.senderName as string | undefined) ??
+              (payload.userName as string | undefined),
+            SenderUsername: payload.senderUsername as string | undefined,
+            SenderE164: payload.senderE164 as string | undefined,
+            WasMentioned: payload.wasMentioned as boolean | undefined,
+            IsForum: payload.isForum as boolean | undefined,
+            MessageSid: (payload.messageId as string | undefined) || row.external_id || undefined,
+            MessageSidFull: payload.messageIdFull as string | undefined,
+          };
+          const dispatcher = createReplyDispatcher({
+            deliver: async (replyPayload) => {
+              await deliverOutboundPayloads({
+                cfg: cfgAtStart,
+                channel: row.channel,
+                to: ctx.To ?? "",
+                accountId: row.account_id || undefined,
+                payloads: [replyPayload],
+                threadId: ctx.MessageThreadId,
+                skipQueue: true,
+              });
+            },
+          });
+          await dispatchRecoveredPendingReply({ ctx, cfg: cfgAtStart, dispatcher });
+          completeInboundTurn(row.id, "delivered");
+          logOrphan.info(`Recovered orphan turn ${row.id} (session=${row.session_key})`);
+        } catch (err) {
+          const errMsg = err instanceof Error ? err.message : String(err);
+          const recovery = recordInboundRecoveryFailure(row.id, errMsg);
+          if (recovery.markedFailed) {
+            logOrphan.warn(
+              `Orphan recovery failed for ${row.id}: ${errMsg} (attempt ${recovery.attempts}/${MAX_INBOUND_RECOVERY_ATTEMPTS}, marking failed)`,
+            );
+            continue;
+          }
+          logOrphan.warn(
+            `Orphan recovery failed for ${row.id}: ${errMsg} (attempt ${recovery.attempts}/${MAX_INBOUND_RECOVERY_ATTEMPTS}, will retry on next restart)`,
+          );
+        }
+      }
+    })().catch((err) => log.error(`Orphan recovery failed: ${String(err)}`));
   }
 
   const execApprovalManager = new ExecApprovalManager();

@@ -1,10 +1,13 @@
 import type { HealthSummary } from "../commands/health.js";
+import { INBOUND_PRUNE_AGE_MS, pruneInboundJournal } from "../infra/message-journal/inbound.js";
+import { OUTBOUND_PRUNE_AGE_MS, pruneOutboundJournal } from "../infra/message-journal/outbound.js";
 import { abortChatRunById, type ChatAbortControllerEntry } from "./chat-abort.js";
 import type { ChatRunEntry } from "./server-chat.js";
 import {
   DEDUPE_MAX,
   DEDUPE_TTL_MS,
   HEALTH_REFRESH_INTERVAL_MS,
+  JOURNAL_PRUNE_INTERVAL_MS,
   TICK_INTERVAL_MS,
 } from "./server-constants.js";
 import type { DedupeEntry } from "./server-shared.js";
@@ -71,6 +74,9 @@ export function startGatewayMaintenanceTimers(params: {
     .refreshGatewayHealthSnapshot({ probe: true })
     .catch((err) => params.logHealth.error(`initial refresh failed: ${formatError(err)}`));
 
+  // Periodic journal prune — runs inside the dedupeCleanup tick but only acts every 6h.
+  let lastJournalPruneAt = 0;
+
   // dedupe cache cleanup
   const dedupeCleanup = setInterval(() => {
     const AGENT_RUN_SEQ_MAX = 10_000;
@@ -126,6 +132,13 @@ export function startGatewayMaintenanceTimers(params: {
       params.chatRunState.abortedRuns.delete(runId);
       params.chatRunBuffers.delete(runId);
       params.chatDeltaSentAt.delete(runId);
+    }
+
+    // Prune terminal journal rows every 6h to keep the DB small for long-running gateways.
+    if (now - lastJournalPruneAt >= JOURNAL_PRUNE_INTERVAL_MS) {
+      pruneInboundJournal(INBOUND_PRUNE_AGE_MS);
+      pruneOutboundJournal(OUTBOUND_PRUNE_AGE_MS);
+      lastJournalPruneAt = now;
     }
   }, 60_000);
 

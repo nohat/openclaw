@@ -149,7 +149,6 @@ const { __testing: acpManagerTesting } = await import("../../acp/control-plane/m
 
 const noAbortResult = { handled: false, aborted: false } as const;
 const emptyConfig = {} as OpenClawConfig;
-type DispatchReplyArgs = Parameters<typeof dispatchReplyFromConfig>[0];
 
 function createDispatcher(): ReplyDispatcher {
   return {
@@ -190,17 +189,6 @@ function firstToolResultPayload(dispatcher: ReplyDispatcher): ReplyPayload | und
   return (dispatcher.sendToolResult as ReturnType<typeof vi.fn>).mock.calls[0]?.[0] as
     | ReplyPayload
     | undefined;
-}
-
-async function dispatchTwiceWithFreshDispatchers(params: Omit<DispatchReplyArgs, "dispatcher">) {
-  await dispatchReplyFromConfig({
-    ...params,
-    dispatcher: createDispatcher(),
-  });
-  await dispatchReplyFromConfig({
-    ...params,
-    dispatcher: createDispatcher(),
-  });
 }
 
 describe("dispatchReplyFromConfig", () => {
@@ -1326,25 +1314,8 @@ describe("dispatchReplyFromConfig", () => {
     expect(finalPayload?.text).toContain("Install and enable the acpx runtime plugin");
   });
 
-  it("deduplicates inbound messages by MessageSid and origin", async () => {
-    setNoAbort();
-    const cfg = emptyConfig;
-    const ctx = buildTestCtx({
-      Provider: "whatsapp",
-      OriginatingChannel: "whatsapp",
-      OriginatingTo: "whatsapp:+15555550123",
-      MessageSid: "msg-1",
-    });
-    const replyResolver = vi.fn(async () => ({ text: "hi" }) as ReplyPayload);
-
-    await dispatchTwiceWithFreshDispatchers({
-      ctx,
-      cfg,
-      replyResolver,
-    });
-
-    expect(replyResolver).toHaveBeenCalledTimes(1);
-  });
+  // Note: inbound message deduplication has moved upstream to dispatch.ts (acceptInboundOrSkip)
+  // and is no longer performed inside dispatchReplyFromConfig.
 
   it("emits message_received hook with originating channel metadata", async () => {
     setNoAbort();
@@ -1481,32 +1452,8 @@ describe("dispatchReplyFromConfig", () => {
     );
   });
 
-  it("marks diagnostics skipped for duplicate inbound messages", async () => {
-    setNoAbort();
-    const cfg = { diagnostics: { enabled: true } } as OpenClawConfig;
-    const ctx = buildTestCtx({
-      Provider: "whatsapp",
-      OriginatingChannel: "whatsapp",
-      OriginatingTo: "whatsapp:+15555550123",
-      MessageSid: "msg-dup",
-    });
-    const replyResolver = vi.fn(async () => ({ text: "hi" }) as ReplyPayload);
-
-    await dispatchTwiceWithFreshDispatchers({
-      ctx,
-      cfg,
-      replyResolver,
-    });
-
-    expect(replyResolver).toHaveBeenCalledTimes(1);
-    expect(diagnosticMocks.logMessageProcessed).toHaveBeenCalledWith(
-      expect.objectContaining({
-        channel: "whatsapp",
-        outcome: "skipped",
-        reason: "duplicate",
-      }),
-    );
-  });
+  // Note: diagnostics for duplicate inbound messages are now triggered upstream in dispatch.ts,
+  // where acceptInboundOrSkip returns false for duplicates before reaching dispatchReplyFromConfig.
 
   it("suppresses isReasoning payloads from final replies (WhatsApp channel)", async () => {
     setNoAbort();

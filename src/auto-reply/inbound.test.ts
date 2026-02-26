@@ -166,7 +166,9 @@ describe("inbound dedupe", () => {
     expect(buildInboundDedupeKey(ctx)).toBe("telegram|telegram:123|42");
   });
 
-  it("skips duplicates with the same key", () => {
+  it("shouldSkipDuplicateInbound is deprecated and always returns false (dedup is now SQLite-backed)", () => {
+    // shouldSkipDuplicateInbound has been replaced by acceptInboundOrSkip in the message journal.
+    // The stub always returns false to avoid breaking callers until they are removed.
     resetInboundDedupe();
     const ctx: MsgContext = {
       Provider: "whatsapp",
@@ -175,7 +177,7 @@ describe("inbound dedupe", () => {
       MessageSid: "msg-1",
     };
     expect(shouldSkipDuplicateInbound(ctx, { now: 100 })).toBe(false);
-    expect(shouldSkipDuplicateInbound(ctx, { now: 200 })).toBe(true);
+    expect(shouldSkipDuplicateInbound(ctx, { now: 200 })).toBe(false); // deprecated: always false
   });
 
   it("does not dedupe when the peer changes", () => {
@@ -193,7 +195,9 @@ describe("inbound dedupe", () => {
     ).toBe(false);
   });
 
-  it("does not dedupe across session keys", () => {
+  it("shouldSkipDuplicateInbound does not dedupe across session keys (deprecated stub)", () => {
+    // shouldSkipDuplicateInbound is a deprecated no-op; it always returns false.
+    // Real per-session dedup is performed by acceptInboundOrSkip in the message journal.
     resetInboundDedupe();
     const base: MsgContext = {
       Provider: "whatsapp",
@@ -209,7 +213,7 @@ describe("inbound dedupe", () => {
     ).toBe(false);
     expect(
       shouldSkipDuplicateInbound({ ...base, SessionKey: "agent:alpha:main" }, { now: 300 }),
-    ).toBe(true);
+    ).toBe(false); // deprecated: always false
   });
 });
 

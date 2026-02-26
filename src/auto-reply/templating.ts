@@ -50,6 +50,8 @@ export type MsgContext = {
   MessageSid?: string;
   /** Provider-specific full message id when MessageSid is a shortened alias. */
   MessageSidFull?: string;
+  /** Unique id for this inbound message turn (used by message-journal for dedup / orphan recovery). */
+  PendingReplyId?: string;
   MessageSids?: string[];
   MessageSidFirst?: string;
   MessageSidLast?: string;

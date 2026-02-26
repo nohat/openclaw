@@ -25,6 +25,11 @@ vi.mock("../../agents/pi-embedded.js", () => ({
   resolveEmbeddedSessionLane: (key: string) => `session:${key.trim() || "main"}`,
 }));
 
+// Stub journal so abort tests don't attempt to open a real SQLite DB.
+vi.mock("../../infra/message-journal/inbound.js", () => ({
+  abortProcessingInboundForSession: vi.fn(),
+}));
+
 const commandQueueMocks = vi.hoisted(() => ({
   clearCommandLane: vi.fn(),
 }));

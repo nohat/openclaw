@@ -51,7 +51,7 @@ vi.mock("../../hooks/internal-hooks.js", () => ({
   createInternalHookEvent: internalHookMocks.createInternalHookEvent,
   triggerInternalHook: internalHookMocks.triggerInternalHook,
 }));
-vi.mock("./delivery-queue.js", () => ({
+vi.mock("../message-journal/outbound.js", () => ({
   enqueueDelivery: queueMocks.enqueueDelivery,
   ackDelivery: queueMocks.ackDelivery,
   failDelivery: queueMocks.failDelivery,
@@ -667,7 +667,7 @@ describe("deliverOutboundPayloads", () => {
     );
   });
 
-  it("acks the queue entry when delivery is aborted", async () => {
+  it("calls ackDelivery (not failDelivery) when delivery is aborted", async () => {
     const sendWhatsApp = vi.fn().mockResolvedValue({ messageId: "w1", toJid: "jid" });
     const abortController = new AbortController();
     abortController.abort();

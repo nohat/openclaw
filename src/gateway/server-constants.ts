@@ -34,3 +34,5 @@ export const TICK_INTERVAL_MS = 30_000;
 export const HEALTH_REFRESH_INTERVAL_MS = 60_000;
 export const DEDUPE_TTL_MS = 5 * 60_000;
 export const DEDUPE_MAX = 1000;
+/** How often the maintenance timer prunes terminal journal rows. */
+export const JOURNAL_PRUNE_INTERVAL_MS = 6 * 60 * 60_000; // 6 hours
