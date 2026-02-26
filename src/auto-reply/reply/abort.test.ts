@@ -4,6 +4,7 @@ import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { SubagentRunRecord } from "../../agents/subagent-registry.js";
 import type { OpenClawConfig } from "../../config/config.js";
+import { messageIdFromTrustedSource } from "../message-id.js";
 import {
   getAbortMemory,
   getAbortMemorySizeForTest,
@@ -97,7 +98,7 @@ describe("abort detection", () => {
         From: params.from,
         To: params.to,
         ...(params.targetSessionKey ? { CommandTargetSessionKey: params.targetSessionKey } : {}),
-        ...(params.messageSid ? { MessageSid: params.messageSid } : {}),
+        ...(params.messageSid ? { MessageSid: messageIdFromTrustedSource(params.messageSid) } : {}),
         ...(typeof params.timestamp === "number" ? { Timestamp: params.timestamp } : {}),
       }),
       cfg: params.cfg,
@@ -411,6 +412,46 @@ describe("abort detection", () => {
     expect(entry.abortedLastRun).toBe(true);
     expect(entry.abortCutoffMessageSid).toBeUndefined();
     expect(entry.abortCutoffTimestamp).toBeUndefined();
+  });
+
+  it("fast-abort clears pending reply markers to prevent restart replay", async () => {
+    const sessionKey = "telegram:123";
+    const sessionId = "session-123";
+    const { storePath, cfg } = await createAbortConfig();
+    await fs.writeFile(
+      storePath,
+      JSON.stringify(
+        {
+          [sessionKey]: {
+            sessionId,
+            updatedAt: Date.now(),
+            pendingReplies: {
+              "msg:abc": {
+                startedAt: Date.now() - 1_000,
+                messageId: "abc",
+                provider: "telegram",
+                to: "telegram:123",
+              },
+            },
+          },
+        },
+        null,
+        2,
+      ),
+    );
+
+    const result = await runStopCommand({
+      cfg,
+      sessionKey,
+      from: "telegram:123",
+      to: "telegram:123",
+    });
+
+    expect(result.handled).toBe(true);
+    const saved = JSON.parse(await fs.readFile(storePath, "utf8")) as Record<string, unknown>;
+    const entry = saved[sessionKey] as Record<string, unknown>;
+    expect(entry.abortedLastRun).toBe(true);
+    expect(entry.pendingReplies).toBeUndefined();
   });
 
   it("fast-abort stops active subagent runs for requester session", async () => {

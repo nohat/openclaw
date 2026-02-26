@@ -318,6 +318,7 @@ export async function tryFastAbortFromMessage(params: {
     if (entry && key) {
       entry.abortedLastRun = true;
       applyAbortCutoffToSessionEntry(entry, abortCutoff);
+      entry.pendingReplies = undefined;
       entry.updatedAt = Date.now();
       store[key] = entry;
       await updateSessionStore(storePath, (nextStore) => {
@@ -327,6 +328,7 @@ export async function tryFastAbortFromMessage(params: {
         }
         nextEntry.abortedLastRun = true;
         applyAbortCutoffToSessionEntry(nextEntry, abortCutoff);
+        nextEntry.pendingReplies = undefined;
         nextEntry.updatedAt = Date.now();
         nextStore[key] = nextEntry;
       });
