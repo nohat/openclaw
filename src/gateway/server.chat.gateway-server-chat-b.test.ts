@@ -2,6 +2,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, test, vi } from "vitest";
+import { resetInboundDedupe } from "../auto-reply/reply/inbound-dedupe.js";
 import type { GetReplyOptions } from "../auto-reply/types.js";
 import { __setMaxChatHistoryMessagesBytesForTest } from "./server-constants.js";
 import {
@@ -175,6 +176,98 @@ describe("gateway server chat", () => {
         testState.agentConfig = undefined;
       }
     });
+  });
+
+  test("recovers orphaned chat.send response on startup after restart", async () => {
+    const sessionDir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-gw-"));
+    testState.sessionStorePath = path.join(sessionDir, "sessions.json");
+    await writeMainSessionStore();
+    const transcriptPath = path.join(sessionDir, "sess-main.jsonl");
+
+    const spy = getReplyFromConfig;
+    spy.mockClear();
+    let replayCallCount = 0;
+    spy.mockImplementation(async (_ctx, opts) => {
+      if (opts?.runId !== "idem-orphan-restart-1") {
+        return undefined;
+      }
+      replayCallCount += 1;
+      if (replayCallCount === 1) {
+        return await new Promise(() => {});
+      }
+      return { text: "Recovered after restart" };
+    });
+
+    let startedA: Awaited<ReturnType<typeof startServerWithClient>> | null = null;
+    let startedB: Awaited<ReturnType<typeof startServerWithClient>> | null = null;
+    try {
+      startedA = await startServerWithClient();
+      await connectOk(startedA.ws);
+
+      const sendRes = await rpcReq(startedA.ws, "chat.send", {
+        sessionKey: "main",
+        message: "hello before restart",
+        idempotencyKey: "idem-orphan-restart-1",
+      });
+      expect(sendRes.ok).toBe(true);
+      expect(sendRes.payload?.status).toBe("started");
+
+      await vi.waitFor(() => {
+        expect(replayCallCount).toBe(1);
+      }, FAST_WAIT_OPTS);
+
+      startedA.ws.close();
+      await startedA.server.close();
+      startedA.envSnapshot.restore();
+      startedA = null;
+      // Test harness restarts the gateway in-process, so reset the module-level
+      // inbound dedupe cache to match real process-restart behavior.
+      resetInboundDedupe();
+
+      const stateDir = process.env.OPENCLAW_STATE_DIR;
+      expect(typeof stateDir).toBe("string");
+      const pendingFiles = await fs
+        .readdir(path.join(stateDir ?? "", "chat-pending-responses"))
+        .catch(() => []);
+      expect(pendingFiles.some((file) => file.endsWith(".json"))).toBe(true);
+
+      startedB = await startServerWithClient();
+      await connectOk(startedB.ws);
+
+      await vi.waitFor(
+        () => {
+          expect(replayCallCount).toBe(2);
+        },
+        { timeout: 4_000, interval: 20 },
+      );
+
+      await vi.waitFor(
+        async () => {
+          const transcript = await fs.readFile(transcriptPath, "utf-8").catch(() => "");
+          expect(transcript).toContain("Recovered after restart");
+        },
+        { timeout: 4_000, interval: 20 },
+      );
+
+      const messages = await fetchHistoryMessages(startedB.ws);
+      const serialized = JSON.stringify(messages);
+      expect(serialized).toContain("Recovered after restart");
+    } finally {
+      spy.mockReset();
+      spy.mockResolvedValue(undefined);
+      if (startedB) {
+        startedB.ws.close();
+        await startedB.server.close();
+        startedB.envSnapshot.restore();
+      }
+      if (startedA) {
+        startedA.ws.close();
+        await startedA.server.close();
+        startedA.envSnapshot.restore();
+      }
+      testState.sessionStorePath = undefined;
+      await fs.rm(sessionDir, { recursive: true, force: true });
+    }
   });
 
   test("chat.history hard-caps single oversized nested payloads", async () => {

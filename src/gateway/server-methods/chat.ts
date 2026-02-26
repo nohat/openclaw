@@ -24,6 +24,12 @@ import {
   resolveChatRunExpiresAtMs,
 } from "../chat-abort.js";
 import { type ChatImageContent, parseMessageWithAttachments } from "../chat-attachments.js";
+import {
+  ackPendingChatResponse,
+  enqueuePendingChatResponse,
+  recoverPendingChatResponses,
+  type PendingChatResponseEntry,
+} from "../chat-pending-responses.js";
 import { stripEnvelopeFromMessage, stripEnvelopeFromMessages } from "../chat-sanitize.js";
 import { GATEWAY_CLIENT_CAPS, hasGatewayClientCap } from "../protocol/client-info.js";
 import {
@@ -529,6 +535,231 @@ function broadcastChatError(params: {
   params.context.agentRunSeq.delete(params.runId);
 }
 
+function buildChatFinalTranscriptIdempotencyKey(runId: string): string {
+  return `${runId}:assistant-final`;
+}
+
+async function replayPendingChatResponseEntry(params: {
+  context: GatewayRequestContext;
+  pending: PendingChatResponseEntry;
+}) {
+  const p = params.pending;
+  const sanitizedMessageResult = sanitizeChatSendMessageInput(p.message);
+  if (!sanitizedMessageResult.ok) {
+    throw new Error(sanitizedMessageResult.error);
+  }
+  const inboundMessage = sanitizedMessageResult.message;
+  if (isChatStopCommandText(inboundMessage)) {
+    throw new Error("startup recovery does not replay stop commands");
+  }
+
+  const normalizedAttachments = normalizeRpcAttachmentsToChatAttachments(p.attachments);
+  const rawMessage = inboundMessage.trim();
+  if (!rawMessage && normalizedAttachments.length === 0) {
+    throw new Error("message or attachment required");
+  }
+
+  let parsedMessage = inboundMessage;
+  let parsedImages: ChatImageContent[] = [];
+  if (normalizedAttachments.length > 0) {
+    const parsed = await parseMessageWithAttachments(inboundMessage, normalizedAttachments, {
+      maxBytes: 5_000_000,
+      log: params.context.logGateway,
+    });
+    parsedMessage = parsed.message;
+    parsedImages = parsed.images;
+  }
+
+  const rawSessionKey = p.sessionKey;
+  const { cfg, entry, canonicalKey: sessionKey } = loadSessionEntry(rawSessionKey);
+  const timeoutMs = resolveAgentTimeoutMs({
+    cfg,
+    overrideMs: p.timeoutMs,
+  });
+  const now = Date.now();
+  const clientRunId = p.idempotencyKey;
+
+  const sendPolicy = resolveSendPolicy({
+    cfg,
+    entry,
+    sessionKey,
+    channel: entry?.channel,
+    chatType: entry?.chatType,
+  });
+  if (sendPolicy === "deny") {
+    throw new Error("send blocked by session policy");
+  }
+
+  const cached = params.context.dedupe.get(`chat:${clientRunId}`);
+  if (cached?.ok && (cached.payload as { status?: unknown } | undefined)?.status === "ok") {
+    return;
+  }
+  if (params.context.chatAbortControllers.has(clientRunId)) {
+    return;
+  }
+
+  const abortController = new AbortController();
+  params.context.chatAbortControllers.set(clientRunId, {
+    controller: abortController,
+    sessionId: entry?.sessionId ?? clientRunId,
+    sessionKey: rawSessionKey,
+    startedAtMs: now,
+    expiresAtMs: resolveChatRunExpiresAtMs({ now, timeoutMs }),
+  });
+
+  const trimmedMessage = parsedMessage.trim();
+  const injectThinking = Boolean(p.thinking && trimmedMessage && !trimmedMessage.startsWith("/"));
+  const commandBody = injectThinking ? `/think ${p.thinking} ${parsedMessage}` : parsedMessage;
+  const stampedMessage = injectTimestamp(parsedMessage, timestampOptsFromConfig(cfg));
+
+  const ctx: MsgContext = {
+    Body: parsedMessage,
+    BodyForAgent: stampedMessage,
+    BodyForCommands: commandBody,
+    RawBody: parsedMessage,
+    CommandBody: commandBody,
+    SessionKey: sessionKey,
+    Provider: INTERNAL_MESSAGE_CHANNEL,
+    Surface: INTERNAL_MESSAGE_CHANNEL,
+    OriginatingChannel: INTERNAL_MESSAGE_CHANNEL,
+    ChatType: "direct",
+    CommandAuthorized: true,
+    MessageSid: clientRunId,
+  };
+
+  const agentId = resolveSessionAgentId({
+    sessionKey,
+    config: cfg,
+  });
+  const { onModelSelected, ...prefixOptions } = createReplyPrefixOptions({
+    cfg,
+    agentId,
+    channel: INTERNAL_MESSAGE_CHANNEL,
+  });
+  const finalReplyParts: string[] = [];
+  const dispatcher = createReplyDispatcher({
+    ...prefixOptions,
+    onError: (err) => {
+      params.context.logGateway.warn(`webchat dispatch failed: ${formatForLog(err)}`);
+    },
+    deliver: async (payload, info) => {
+      if (info.kind !== "final") {
+        return;
+      }
+      const text = payload.text?.trim() ?? "";
+      if (!text) {
+        return;
+      }
+      finalReplyParts.push(text);
+    },
+  });
+
+  let agentRunStarted = false;
+  try {
+    await dispatchInboundMessage({
+      ctx,
+      cfg,
+      dispatcher,
+      replyOptions: {
+        runId: clientRunId,
+        abortSignal: abortController.signal,
+        images: parsedImages.length > 0 ? parsedImages : undefined,
+        onAgentRunStart: () => {
+          agentRunStarted = true;
+        },
+        onModelSelected,
+      },
+    });
+
+    if (!agentRunStarted) {
+      const combinedReply = finalReplyParts
+        .map((part) => part.trim())
+        .filter(Boolean)
+        .join("\n\n")
+        .trim();
+      let message: Record<string, unknown> | undefined;
+      if (combinedReply) {
+        const { storePath: latestStorePath, entry: latestEntry } = loadSessionEntry(sessionKey);
+        const sessionId = latestEntry?.sessionId ?? entry?.sessionId ?? clientRunId;
+        const appended = appendAssistantTranscriptMessage({
+          message: combinedReply,
+          sessionId,
+          storePath: latestStorePath,
+          sessionFile: latestEntry?.sessionFile,
+          agentId,
+          createIfMissing: true,
+          idempotencyKey: buildChatFinalTranscriptIdempotencyKey(clientRunId),
+        });
+        if (appended.ok) {
+          message = appended.message;
+        } else {
+          params.context.logGateway.warn(
+            `webchat transcript append failed: ${appended.error ?? "unknown error"}`,
+          );
+          const ts = Date.now();
+          message = {
+            role: "assistant",
+            content: [{ type: "text", text: combinedReply }],
+            timestamp: ts,
+            stopReason: "stop",
+            usage: { input: 0, output: 0, totalTokens: 0 },
+          };
+        }
+      }
+      broadcastChatFinal({
+        context: params.context,
+        runId: clientRunId,
+        sessionKey: rawSessionKey,
+        message,
+      });
+    }
+
+    params.context.dedupe.set(`chat:${clientRunId}`, {
+      ts: Date.now(),
+      ok: true,
+      payload: { runId: clientRunId, status: "ok" as const },
+    });
+  } catch (err) {
+    const error = errorShape(ErrorCodes.UNAVAILABLE, String(err));
+    params.context.dedupe.set(`chat:${clientRunId}`, {
+      ts: Date.now(),
+      ok: false,
+      payload: {
+        runId: clientRunId,
+        status: "error" as const,
+        summary: String(err),
+      },
+      error,
+    });
+    broadcastChatError({
+      context: params.context,
+      runId: clientRunId,
+      sessionKey: rawSessionKey,
+      errorMessage: String(err),
+    });
+    throw err;
+  } finally {
+    params.context.chatAbortControllers.delete(clientRunId);
+  }
+}
+
+export async function recoverPendingChatSendResponsesOnStartup(params: {
+  context: GatewayRequestContext;
+}) {
+  const cutoffEnqueuedAt = Date.now();
+  const log = params.context.logGateway.child("chat-recovery");
+  await recoverPendingChatResponses({
+    log,
+    cutoffEnqueuedAt,
+    replay: async (pending) => {
+      await replayPendingChatResponseEntry({
+        context: params.context,
+        pending,
+      });
+    },
+  });
+}
+
 export const chatHandlers: GatewayRequestHandlers = {
   "chat.history": async ({ params, respond, context }) => {
     if (!validateChatHistoryParams(params)) {
@@ -786,6 +1017,35 @@ export const chatHandlers: GatewayRequestHandlers = {
     }
 
     try {
+      await enqueuePendingChatResponse({
+        idempotencyKey: clientRunId,
+        sessionKey: rawSessionKey,
+        message: p.message,
+        thinking: typeof p.thinking === "string" ? p.thinking : undefined,
+        timeoutMs: typeof p.timeoutMs === "number" ? p.timeoutMs : undefined,
+        attachments:
+          normalizedAttachments.length > 0
+            ? normalizedAttachments.map((att) => ({
+                type: typeof att.type === "string" ? att.type : undefined,
+                mimeType: typeof att.mimeType === "string" ? att.mimeType : undefined,
+                fileName: typeof att.fileName === "string" ? att.fileName : undefined,
+                content: typeof att.content === "string" ? att.content : undefined,
+              }))
+            : undefined,
+      });
+    } catch (err) {
+      respond(
+        false,
+        undefined,
+        errorShape(
+          ErrorCodes.UNAVAILABLE,
+          `failed to persist pending chat response: ${String(err)}`,
+        ),
+      );
+      return;
+    }
+
+    try {
       const abortController = new AbortController();
       context.chatAbortControllers.set(clientRunId, {
         controller: abortController,
@@ -888,7 +1148,7 @@ export const chatHandlers: GatewayRequestHandlers = {
           onModelSelected,
         },
       })
-        .then(() => {
+        .then(async () => {
           if (!agentRunStarted) {
             const combinedReply = finalReplyParts
               .map((part) => part.trim())
@@ -907,6 +1167,7 @@ export const chatHandlers: GatewayRequestHandlers = {
                 sessionFile: latestEntry?.sessionFile,
                 agentId,
                 createIfMissing: true,
+                idempotencyKey: buildChatFinalTranscriptIdempotencyKey(clientRunId),
               });
               if (appended.ok) {
                 message = appended.message;
@@ -938,8 +1199,11 @@ export const chatHandlers: GatewayRequestHandlers = {
             ok: true,
             payload: { runId: clientRunId, status: "ok" as const },
           });
+          await ackPendingChatResponse(clientRunId).catch((err) => {
+            context.logGateway.warn(`failed to clear pending chat response: ${formatForLog(err)}`);
+          });
         })
-        .catch((err) => {
+        .catch(async (err) => {
           const error = errorShape(ErrorCodes.UNAVAILABLE, String(err));
           context.dedupe.set(`chat:${clientRunId}`, {
             ts: Date.now(),
@@ -956,6 +1220,11 @@ export const chatHandlers: GatewayRequestHandlers = {
             runId: clientRunId,
             sessionKey: rawSessionKey,
             errorMessage: String(err),
+          });
+          await ackPendingChatResponse(clientRunId).catch((ackErr) => {
+            context.logGateway.warn(
+              `failed to clear pending chat response: ${formatForLog(ackErr)}`,
+            );
           });
         })
         .finally(() => {
