@@ -10,10 +10,7 @@ export type AbortCutoff = {
 type SessionAbortCutoffEntry = Pick<SessionEntry, "abortCutoffMessageSid" | "abortCutoffTimestamp">;
 
 export function resolveAbortCutoffFromContext(ctx: MsgContext): AbortCutoff | undefined {
-  const messageSid =
-    (typeof ctx.MessageSidFull === "string" && ctx.MessageSidFull.trim()) ||
-    (typeof ctx.MessageSid === "string" && ctx.MessageSid.trim()) ||
-    undefined;
+  const messageSid = ctx.MessageSidFull || ctx.MessageSid || undefined;
   const timestamp =
     typeof ctx.Timestamp === "number" && Number.isFinite(ctx.Timestamp) ? ctx.Timestamp : undefined;
   if (!messageSid && timestamp === undefined) {

@@ -10,6 +10,7 @@ import {
   createInboundDebouncer,
   resolveInboundDebounceMs,
 } from "../../auto-reply/inbound-debounce.js";
+import { messageIdFromTrustedSource } from "../../auto-reply/message-id.js";
 import {
   buildPendingHistoryContextFromMap,
   clearHistoryEntriesIfEnabled,
@@ -165,7 +166,7 @@ export function createSignalEventHandler(deps: SignalEventHandlerDeps) {
       SenderId: entry.senderDisplay,
       Provider: "signal" as const,
       Surface: "signal" as const,
-      MessageSid: entry.messageId,
+      MessageSid: entry.messageId ? messageIdFromTrustedSource(String(entry.messageId)) : undefined,
       Timestamp: entry.timestamp ?? undefined,
       MediaPath: entry.mediaPath,
       MediaType: entry.mediaType,

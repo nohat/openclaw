@@ -20,6 +20,7 @@ import { ButtonStyle, ChannelType } from "discord-api-types/v10";
 import { resolveHumanDelayConfig } from "../../agents/identity.js";
 import { resolveChunkMode, resolveTextChunkLimit } from "../../auto-reply/chunk.js";
 import { formatInboundEnvelope, resolveEnvelopeFormatOptions } from "../../auto-reply/envelope.js";
+import { messageIdFromTrustedSource } from "../../auto-reply/message-id.js";
 import { finalizeInboundContext } from "../../auto-reply/reply/inbound-context.js";
 import { dispatchReplyWithBufferedBlockDispatcher } from "../../auto-reply/reply/provider-dispatcher.js";
 import { createReplyReferencePlanner } from "../../auto-reply/reply/reply-reference.js";
@@ -892,7 +893,10 @@ async function dispatchDiscordComponentEvent(params: {
     WasMentioned: true,
     CommandAuthorized: commandAuthorized,
     CommandSource: "text" as const,
-    MessageSid: interaction.rawData.id,
+    MessageSid:
+      interaction.rawData.id != null
+        ? messageIdFromTrustedSource(String(interaction.rawData.id))
+        : undefined,
     Timestamp: timestamp,
     OriginatingChannel: "discord" as const,
     OriginatingTo: `channel:${interactionCtx.channelId}`,

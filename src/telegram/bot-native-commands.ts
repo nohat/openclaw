@@ -9,6 +9,7 @@ import {
   parseCommandArgs,
   resolveCommandArgMenu,
 } from "../auto-reply/commands-registry.js";
+import { messageIdFromTrustedSource } from "../auto-reply/message-id.js";
 import { finalizeInboundContext } from "../auto-reply/reply/inbound-context.js";
 import { dispatchReplyWithBufferedBlockDispatcher } from "../auto-reply/reply/provider-dispatcher.js";
 import { listSkillCommandsForAgents } from "../auto-reply/skill-commands.js";
@@ -579,7 +580,7 @@ export const registerTelegramNativeCommands = ({
             SenderUsername: senderUsername || undefined,
             Surface: "telegram",
             Provider: "telegram",
-            MessageSid: String(msg.message_id),
+            MessageSid: messageIdFromTrustedSource(String(msg.message_id)),
             Timestamp: msg.date ? msg.date * 1000 : undefined,
             WasMentioned: true,
             CommandAuthorized: commandAuthorized,

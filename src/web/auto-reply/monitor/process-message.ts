@@ -5,6 +5,7 @@ import {
   formatInboundEnvelope,
   resolveEnvelopeFormatOptions,
 } from "../../../auto-reply/envelope.js";
+import { messageIdFromTrustedSource } from "../../../auto-reply/message-id.js";
 import type { getReplyFromConfig } from "../../../auto-reply/reply.js";
 import {
   buildHistoryContextFromEntries,
@@ -297,7 +298,8 @@ export async function processMessage(params: {
     To: params.msg.to,
     SessionKey: params.route.sessionKey,
     AccountId: params.route.accountId,
-    MessageSid: params.msg.id,
+    MessageSid:
+      params.msg.id != null ? messageIdFromTrustedSource(String(params.msg.id)) : undefined,
     ReplyToId: params.msg.replyToId,
     ReplyToBody: params.msg.replyToBody,
     ReplyToSender: params.msg.replyToSender,

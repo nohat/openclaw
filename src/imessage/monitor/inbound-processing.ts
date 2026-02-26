@@ -5,6 +5,7 @@ import {
   resolveEnvelopeFormatOptions,
   type EnvelopeFormatOptions,
 } from "../../auto-reply/envelope.js";
+import { messageIdFromTrustedSource } from "../../auto-reply/message-id.js";
 import {
   buildPendingHistoryContextFromMap,
   recordPendingHistoryEntryIfEnabled,
@@ -444,7 +445,8 @@ export function buildIMessageInboundContext(params: {
     SenderId: decision.sender,
     Provider: "imessage",
     Surface: "imessage",
-    MessageSid: params.message.id ? String(params.message.id) : undefined,
+    MessageSid:
+      params.message.id != null ? messageIdFromTrustedSource(String(params.message.id)) : undefined,
     ReplyToId: decision.replyContext?.id,
     ReplyToBody: decision.replyContext?.body,
     ReplyToSender: decision.replyContext?.sender,

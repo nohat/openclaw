@@ -5,6 +5,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { OpenClawConfig } from "../config/config.js";
 import type { GroupKeyResolution } from "../config/sessions.js";
 import { createInboundDebouncer } from "./inbound-debounce.js";
+import { messageIdFromTrustedSource } from "./message-id.js";
 import { resolveGroupRequireMention } from "./reply/groups.js";
 import { finalizeInboundContext } from "./reply/inbound-context.js";
 import {
@@ -161,7 +162,7 @@ describe("inbound dedupe", () => {
       Provider: "telegram",
       OriginatingChannel: "telegram",
       OriginatingTo: "telegram:123",
-      MessageSid: "42",
+      MessageSid: messageIdFromTrustedSource("42"),
     };
     expect(buildInboundDedupeKey(ctx)).toBe("telegram|telegram:123|42");
   });
@@ -172,7 +173,7 @@ describe("inbound dedupe", () => {
       Provider: "whatsapp",
       OriginatingChannel: "whatsapp",
       OriginatingTo: "whatsapp:+1555",
-      MessageSid: "msg-1",
+      MessageSid: messageIdFromTrustedSource("msg-1"),
     };
     expect(shouldSkipDuplicateInbound(ctx, { now: 100 })).toBe(false);
     expect(shouldSkipDuplicateInbound(ctx, { now: 200 })).toBe(true);
@@ -183,7 +184,7 @@ describe("inbound dedupe", () => {
     const base: MsgContext = {
       Provider: "whatsapp",
       OriginatingChannel: "whatsapp",
-      MessageSid: "msg-1",
+      MessageSid: messageIdFromTrustedSource("msg-1"),
     };
     expect(
       shouldSkipDuplicateInbound({ ...base, OriginatingTo: "whatsapp:+1000" }, { now: 100 }),
@@ -199,7 +200,7 @@ describe("inbound dedupe", () => {
       Provider: "whatsapp",
       OriginatingChannel: "whatsapp",
       OriginatingTo: "whatsapp:+1555",
-      MessageSid: "msg-1",
+      MessageSid: messageIdFromTrustedSource("msg-1"),
     };
     expect(
       shouldSkipDuplicateInbound({ ...base, SessionKey: "agent:alpha:main" }, { now: 100 }),

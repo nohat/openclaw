@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { loadModelCatalog } from "../agents/model-catalog.js";
 import type { OpenClawConfig } from "../config/config.js";
 import { withTempHome as withTempHomeHarness } from "../config/home-env.test-harness.js";
+import { messageIdFromTrustedSource } from "./message-id.js";
 import { getReplyFromConfig } from "./reply.js";
 
 type RunEmbeddedPiAgent = typeof import("../agents/pi-embedded.js").runEmbeddedPiAgent;
@@ -42,7 +43,7 @@ function createTelegramMessage(messageSid: string) {
     Body: "ping",
     From: "+1004",
     To: "+2000",
-    MessageSid: messageSid,
+    MessageSid: messageIdFromTrustedSource(messageSid),
     Provider: "telegram",
   } as const;
 }

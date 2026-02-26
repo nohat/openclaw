@@ -5,6 +5,7 @@ import {
   formatInboundEnvelope,
   resolveEnvelopeFormatOptions,
 } from "../../../auto-reply/envelope.js";
+import { messageIdFromTrustedSource } from "../../../auto-reply/message-id.js";
 import {
   buildPendingHistoryContextFromMap,
   recordPendingHistoryEntryIfEnabled,
@@ -622,7 +623,7 @@ export async function prepareSlackMessage(params: {
     SenderId: senderId,
     Provider: "slack" as const,
     Surface: "slack" as const,
-    MessageSid: message.ts,
+    MessageSid: message.ts != null ? messageIdFromTrustedSource(String(message.ts)) : undefined,
     ReplyToId: threadContext.replyToId,
     // Preserve thread context for routed tool notifications.
     MessageThreadId: threadContext.messageThreadId,

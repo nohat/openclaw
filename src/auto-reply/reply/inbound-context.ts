@@ -1,3 +1,4 @@
+import crypto from "node:crypto";
 import { normalizeChatType } from "../../channels/chat-type.js";
 import { resolveConversationLabel } from "../../channels/conversation-label.js";
 import type { FinalizedMsgContext, MsgContext } from "../templating.js";
@@ -86,6 +87,13 @@ export function finalizeInboundContext<T extends Record<string, unknown>>(
   } else {
     normalized.ConversationLabel = explicitLabel;
   }
+
+  // Canonical pending-reply id (session store key). Contract: MessageSid/MessageSidFull are already trimmed when set.
+  normalized.PendingReplyId = normalized.MessageSidFull
+    ? `msgfull:${normalized.MessageSidFull}`
+    : normalized.MessageSid
+      ? `msg:${normalized.MessageSid}`
+      : `synthetic:${Date.now()}:${crypto.randomUUID()}`;
 
   // Always set. Default-deny when upstream forgets to populate it.
   normalized.CommandAuthorized = normalized.CommandAuthorized === true;

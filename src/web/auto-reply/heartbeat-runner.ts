@@ -5,6 +5,7 @@ import {
   resolveHeartbeatPrompt,
   stripHeartbeatToken,
 } from "../../auto-reply/heartbeat.js";
+import { asTrimmedMessageId } from "../../auto-reply/message-id.js";
 import { getReplyFromConfig } from "../../auto-reply/reply.js";
 import { HEARTBEAT_TOKEN } from "../../auto-reply/tokens.js";
 import { resolveWhatsAppHeartbeatRecipients } from "../../channels/plugins/whatsapp-heartbeat.js";
@@ -162,6 +163,7 @@ export async function runWebHeartbeatOnce(opts: {
       return;
     }
 
+    const rawSessionId = sessionId ?? sessionSnapshot.entry?.sessionId;
     const replyResult = await replyResolver(
       {
         Body: appendCronStyleCurrentTimeLine(
@@ -171,7 +173,10 @@ export async function runWebHeartbeatOnce(opts: {
         ),
         From: to,
         To: to,
-        MessageSid: sessionId ?? sessionSnapshot.entry?.sessionId,
+        MessageSid:
+          rawSessionId != null
+            ? (asTrimmedMessageId(String(rawSessionId)) ?? undefined)
+            : undefined,
       },
       { isHeartbeat: true },
       cfg,

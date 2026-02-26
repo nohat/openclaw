@@ -148,7 +148,7 @@ describe("buildInboundUserContextPrefix", () => {
   it("includes message_id in conversation info", () => {
     const text = buildInboundUserContextPrefix({
       ChatType: "group",
-      MessageSid: "  msg-123  ",
+      MessageSid: "msg-123",
     } as TemplateContext);
 
     const conversationInfo = parseConversationInfoPayload(text);

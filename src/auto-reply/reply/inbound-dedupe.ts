@@ -17,7 +17,7 @@ const resolveInboundPeerId = (ctx: MsgContext) =>
 
 export function buildInboundDedupeKey(ctx: MsgContext): string | null {
   const provider = normalizeProvider(ctx.OriginatingChannel ?? ctx.Provider ?? ctx.Surface);
-  const messageId = ctx.MessageSid?.trim();
+  const messageId = ctx.MessageSid;
   if (!provider || !messageId) {
     return null;
   }

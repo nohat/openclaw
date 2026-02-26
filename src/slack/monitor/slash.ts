@@ -1,5 +1,6 @@
 import type { SlackActionMiddlewareArgs, SlackCommandMiddlewareArgs } from "@slack/bolt";
 import type { ChatCommandDefinition, CommandArgs } from "../../auto-reply/commands-registry.js";
+import { messageIdFromTrustedSource } from "../../auto-reply/message-id.js";
 import type { ReplyPayload } from "../../auto-reply/types.js";
 import { formatAllowlistMatchMeta } from "../../channels/allowlist-match.js";
 import { resolveCommandAuthorizedFromAuthorizers } from "../../channels/command-gating.js";
@@ -586,7 +587,7 @@ export async function registerSlackMonitorSlashCommands(params: {
         Provider: "slack" as const,
         Surface: "slack" as const,
         WasMentioned: true,
-        MessageSid: command.trigger_id,
+        MessageSid: command.trigger_id ? messageIdFromTrustedSource(command.trigger_id) : undefined,
         Timestamp: Date.now(),
         SessionKey:
           `agent:${route.agentId}:${slashCommand.sessionPrefix}:${command.user_id}`.toLowerCase(),

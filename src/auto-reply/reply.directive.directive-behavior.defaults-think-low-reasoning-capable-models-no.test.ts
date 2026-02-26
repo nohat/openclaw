@@ -1,6 +1,7 @@
 import "./reply.directive.directive-behavior.e2e-mocks.js";
 import { describe, expect, it, vi } from "vitest";
 import { loadSessionStore } from "../config/sessions.js";
+import { messageIdFromTrustedSource } from "./message-id.js";
 import {
   assertModelSelection,
   installDirectiveBehaviorE2EHooks,
@@ -35,7 +36,7 @@ async function runReplyToCurrentCase(home: string, text: string) {
       Body: "ping",
       From: "+1004",
       To: "+2000",
-      MessageSid: "msg-123",
+      MessageSid: messageIdFromTrustedSource("msg-123"),
     },
     {},
     makeWhatsAppDirectiveConfig(home, { model: "anthropic/claude-opus-4-5" }),
@@ -417,7 +418,7 @@ describe("directive behavior", () => {
           Body: "ping",
           From: "+1004",
           To: "+2000",
-          MessageSid: "msg-123",
+          MessageSid: messageIdFromTrustedSource("msg-123"),
         },
         {},
         makeWhatsAppDirectiveConfig(home, { model: { primary: "anthropic/claude-opus-4-5" } }),

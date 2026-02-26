@@ -1,5 +1,6 @@
 import type { MessageEvent, StickerEventMessage, EventSource, PostbackEvent } from "@line/bot-sdk";
 import { formatInboundEnvelope, resolveEnvelopeFormatOptions } from "../auto-reply/envelope.js";
+import { asTrimmedMessageId } from "../auto-reply/message-id.js";
 import { finalizeInboundContext } from "../auto-reply/reply/inbound-context.js";
 import { formatLocationText, toLocationContext } from "../channels/location.js";
 import type { OpenClawConfig } from "../config/config.js";
@@ -282,7 +283,9 @@ async function finalizeLineInboundContext(params: {
     SenderId: senderId,
     Provider: "line",
     Surface: "line",
-    MessageSid: params.messageSid,
+    MessageSid: params.messageSid
+      ? (asTrimmedMessageId(params.messageSid) ?? undefined)
+      : undefined,
     Timestamp: params.timestamp,
     MediaPath: params.media.firstPath,
     MediaType: params.media.firstContentType,

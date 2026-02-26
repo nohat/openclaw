@@ -32,6 +32,7 @@ import {
   resolveCommandArgMenu,
   serializeCommandArgs,
 } from "../../auto-reply/commands-registry.js";
+import { messageIdFromTrustedSource } from "../../auto-reply/message-id.js";
 import { finalizeInboundContext } from "../../auto-reply/reply/inbound-context.js";
 import { resolveStoredModelOverride } from "../../auto-reply/reply/model-selection.js";
 import { dispatchReplyWithDispatcher } from "../../auto-reply/reply/provider-dispatcher.js";
@@ -1567,7 +1568,7 @@ async function dispatchDiscordCommandInteraction(params: {
     Provider: "discord" as const,
     Surface: "discord" as const,
     WasMentioned: true,
-    MessageSid: interactionId,
+    MessageSid: interactionId ? messageIdFromTrustedSource(interactionId) : undefined,
     MessageThreadId: isThreadChannel ? channelId : undefined,
     Timestamp: Date.now(),
     CommandAuthorized: commandAuthorized,

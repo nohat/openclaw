@@ -9,6 +9,7 @@ import { resolveDefaultModelForAgent } from "../agents/model-selection.js";
 import { hasControlCommand } from "../auto-reply/command-detection.js";
 import { normalizeCommandBody } from "../auto-reply/commands-registry.js";
 import { formatInboundEnvelope, resolveEnvelopeFormatOptions } from "../auto-reply/envelope.js";
+import { asTrimmedMessageId, messageIdFromTrustedSource } from "../auto-reply/message-id.js";
 import {
   buildPendingHistoryContextFromMap,
   recordPendingHistoryEntryIfEnabled,
@@ -660,7 +661,9 @@ export const buildTelegramMessageContext = async ({
     SenderUsername: senderUsername || undefined,
     Provider: "telegram",
     Surface: "telegram",
-    MessageSid: options?.messageIdOverride ?? String(msg.message_id),
+    MessageSid: options?.messageIdOverride
+      ? (asTrimmedMessageId(options.messageIdOverride) ?? undefined)
+      : messageIdFromTrustedSource(String(msg.message_id)),
     ReplyToId: replyTarget?.id,
     ReplyToBody: replyTarget?.body,
     ReplyToSender: replyTarget?.sender,

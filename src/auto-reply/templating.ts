@@ -6,6 +6,7 @@ import type {
 import type { StickerMetadata } from "../telegram/bot/types.js";
 import type { InternalMessageChannel } from "../utils/message-channel.js";
 import type { CommandArgs } from "./commands-registry.types.js";
+import type { TrimmedMessageId } from "./message-id.js";
 
 /** Valid message channels for routing. */
 export type OriginatingChannelType = ChannelId | InternalMessageChannel;
@@ -47,9 +48,20 @@ export type MsgContext = {
   /** Provider account id (multi-account). */
   AccountId?: string;
   ParentSessionKey?: string;
-  MessageSid?: string;
-  /** Provider-specific full message id when MessageSid is a shortened alias. */
-  MessageSidFull?: string;
+  /**
+   * Provider message id. Set via asTrimmedMessageId (untrusted) or messageIdFromTrustedSource (API/numeric).
+   */
+  MessageSid?: TrimmedMessageId;
+  /**
+   * Provider-specific full message id when MessageSid is a shortened alias.
+   * Set via asTrimmedMessageId or messageIdFromTrustedSource.
+   */
+  MessageSidFull?: TrimmedMessageId;
+  /**
+   * Stable id for this turn, used as the session store pendingReplies key.
+   * Set by finalizeInboundContext (msgfull:, msg:, or synthetic:).
+   */
+  PendingReplyId?: string;
   MessageSids?: string[];
   MessageSidFirst?: string;
   MessageSidLast?: string;

@@ -4,6 +4,7 @@ import { EmbeddedBlockChunker } from "../../agents/pi-embedded-block-chunker.js"
 import { resolveChunkMode } from "../../auto-reply/chunk.js";
 import { dispatchInboundMessage } from "../../auto-reply/dispatch.js";
 import { formatInboundEnvelope, resolveEnvelopeFormatOptions } from "../../auto-reply/envelope.js";
+import { messageIdFromTrustedSource } from "../../auto-reply/message-id.js";
 import {
   buildPendingHistoryContextFromMap,
   clearHistoryEntriesIfEnabled,
@@ -354,7 +355,7 @@ export async function processDiscordMessage(ctx: DiscordMessagePreflightContext)
     Provider: "discord" as const,
     Surface: "discord" as const,
     WasMentioned: effectiveWasMentioned,
-    MessageSid: message.id,
+    MessageSid: message.id != null ? messageIdFromTrustedSource(message.id) : undefined,
     ReplyToId: replyContext?.id,
     ReplyToBody: replyContext?.body,
     ReplyToSender: replyContext?.sender,
