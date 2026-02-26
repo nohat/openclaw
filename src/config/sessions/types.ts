@@ -65,6 +65,33 @@ export type AcpSessionRuntimeOptions = {
   backendExtras?: Record<string, string>;
 };
 
+export type PendingReplyState = {
+  /** When shared dispatch accepted the inbound turn for reply generation. */
+  startedAt: number;
+  messageId?: string;
+  messageIdFull?: string;
+  from?: string;
+  to?: string;
+  accountId?: string;
+  threadId?: string | number;
+  provider?: string;
+  surface?: string;
+  originatingChannel?: string;
+  originatingTo?: string;
+  chatType?: SessionChatType;
+  commandAuthorized?: boolean;
+  commandSource?: "text" | "native";
+  commandTargetSessionKey?: string;
+  senderId?: string;
+  senderName?: string;
+  senderUsername?: string;
+  senderE164?: string;
+  wasMentioned?: boolean;
+  isForum?: boolean;
+};
+
+export type PendingReplyMap = Record<string, PendingReplyState>;
+
 export type SessionEntry = {
   /**
    * Last delivered heartbeat payload (used to suppress duplicate heartbeat notifications).
@@ -164,6 +191,8 @@ export type SessionEntry = {
   skillsSnapshot?: SessionSkillSnapshot;
   systemPromptReport?: SessionSystemPromptReport;
   acp?: SessionAcpMeta;
+  /** Crash-recovery markers for inbound turns that still need replies (keyed by turn id). */
+  pendingReplies?: PendingReplyMap;
 };
 
 function normalizeRuntimeField(value: string | undefined): string | undefined {

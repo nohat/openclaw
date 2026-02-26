@@ -256,6 +256,7 @@ async function killSubagentRun(params: {
         return;
       }
       current.abortedLastRun = true;
+      current.pendingReplies = undefined;
       current.updatedAt = Date.now();
       store[childSessionKey] = current;
     });

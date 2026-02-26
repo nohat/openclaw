@@ -54,9 +54,11 @@ import {
   getActiveSecretsRuntimeSnapshot,
   prepareSecretsRuntimeSnapshot,
 } from "../secrets/runtime.js";
+import { stripInlineDirectiveTagsFromMessageForDisplay } from "../utils/directive-tags.js";
 import { runOnboardingWizard } from "../wizard/onboarding.js";
 import { createAuthRateLimiter, type AuthRateLimiter } from "./auth-rate-limit.js";
 import { startChannelHealthMonitor } from "./channel-health-monitor.js";
+import { stripEnvelopeFromMessage } from "./chat-sanitize.js";
 import { startGatewayConfigReloader } from "./config-reload.js";
 import type { ControlUiRootState } from "./control-ui.js";
 import {
@@ -809,6 +811,54 @@ export async function startGatewayServer(
       logChannels,
       logBrowser,
     }));
+  }
+
+  if (!minimalTestGateway) {
+    void (async () => {
+      const { recoverPendingRepliesOnStartup } = await import("./server-startup-orphan-replies.js");
+      const nextChatSeq = (runId: string) => {
+        const next = (agentRunSeq.get(runId) ?? 0) + 1;
+        agentRunSeq.set(runId, next);
+        return next;
+      };
+      await recoverPendingRepliesOnStartup({
+        cfg: cfgAtStart,
+        log: log.child("pending-reply-recovery"),
+        webchat: {
+          onFinal: ({ runId, sessionKey, message }) => {
+            const seq = nextChatSeq(runId);
+            const strippedEnvelopeMessage = stripEnvelopeFromMessage(message) as
+              | Record<string, unknown>
+              | undefined;
+            const payload = {
+              runId,
+              sessionKey,
+              seq,
+              state: "final" as const,
+              message: stripInlineDirectiveTagsFromMessageForDisplay(strippedEnvelopeMessage),
+            };
+            broadcast("chat", payload);
+            nodeSendToSession(sessionKey, "chat", payload);
+            agentRunSeq.delete(runId);
+          },
+          onError: ({ runId, sessionKey, errorMessage }) => {
+            const seq = nextChatSeq(runId);
+            const payload = {
+              runId,
+              sessionKey,
+              seq,
+              state: "error" as const,
+              errorMessage,
+            };
+            broadcast("chat", payload);
+            nodeSendToSession(sessionKey, "chat", payload);
+            agentRunSeq.delete(runId);
+          },
+        },
+      });
+    })().catch((err) => {
+      log.error(`Pending reply recovery failed: ${String(err)}`);
+    });
   }
 
   // Run gateway_start plugin hook (fire-and-forget)

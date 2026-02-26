@@ -64,6 +64,7 @@ export async function handleSubagentsKillAction(
 
   if (entry) {
     entry.abortedLastRun = true;
+    entry.pendingReplies = undefined;
     entry.updatedAt = Date.now();
     store[childKey] = entry;
     await updateSessionStore(storePath, (nextStore) => {
