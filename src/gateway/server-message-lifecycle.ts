@@ -57,6 +57,11 @@ export async function startMessageLifecycleWorkers(
     params.log.warn(`message-lifecycle: legacy queue import failed: ${String(err)}`);
   });
 
+  // Record startup time before starting workers. The outbox worker uses this to skip entries
+  // enqueued after startup (those are being delivered on the direct path and must not be
+  // double-delivered). Only entries older than this timestamp are crash survivors.
+  const startupCutoff = Date.now();
+
   const outboxIntervalMs = Math.max(250, Math.floor(params.outboxIntervalMs ?? 1000));
   const turnIntervalMs = Math.max(250, Math.floor(params.turnIntervalMs ?? 1200));
   const maxTurnsPerPass = Math.max(1, Math.floor(params.maxTurnsPerPass ?? 16));
@@ -70,10 +75,16 @@ export async function startMessageLifecycleWorkers(
       cfg: params.cfg,
       stateDir: params.stateDir,
       maxRecoveryMs: Math.max(750, Math.floor(outboxIntervalMs * 0.75)),
+      startupCutoff,
     });
-    if (summary.recovered > 0 || summary.failed > 0 || summary.skippedMaxRetries > 0) {
+    if (
+      summary.recovered > 0 ||
+      summary.failed > 0 ||
+      summary.skippedMaxRetries > 0 ||
+      summary.skippedStartupCutoff > 0
+    ) {
       outboxLog.info(
-        `pass recovered=${summary.recovered} failed=${summary.failed} skippedMaxRetries=${summary.skippedMaxRetries} deferredBackoff=${summary.deferredBackoff}`,
+        `pass recovered=${summary.recovered} failed=${summary.failed} skippedMaxRetries=${summary.skippedMaxRetries} deferredBackoff=${summary.deferredBackoff} skippedStartupCutoff=${summary.skippedStartupCutoff}`,
       );
     }
     pruneOutbox(OUTBOX_PRUNE_AGE_MS, params.stateDir);

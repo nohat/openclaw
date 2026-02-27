@@ -272,9 +272,22 @@ describe("delivery-queue", () => {
   describe("recoverPendingDeliveries", () => {
     const baseCfg = {};
     const createLog = () => ({ info: vi.fn(), warn: vi.fn(), error: vi.fn() });
+    // Age all queued entries to simulate having survived a gateway crash.
+    // Without aging, entries are not eligible because the outbox worker defers fresh
+    // entries for 5 s to avoid racing with the direct delivery path.
+    const makeEntriesEligible = () => {
+      const db = getLifecycleDb(tmpDir);
+      const past = Date.now() - 10_000;
+      db.prepare(
+        `UPDATE message_outbox SET queued_at=?, next_attempt_at=? WHERE status='queued'`,
+      ).run(past, past);
+    };
     const enqueueCrashRecoveryEntries = async () => {
       await enqueueDelivery({ channel: "whatsapp", to: "+1", payloads: [{ text: "a" }] }, tmpDir);
       await enqueueDelivery({ channel: "telegram", to: "2", payloads: [{ text: "b" }] }, tmpDir);
+      // Age entries to simulate having survived a gateway crash — they are unambiguously
+      // before the startup cutoff and must not be mistaken for live deliveries.
+      makeEntriesEligible();
     };
     const setEntryState = (
       id: string,
@@ -308,10 +321,12 @@ describe("delivery-queue", () => {
       deliver,
       log = createLog(),
       maxRecoveryMs,
+      startupCutoff,
     }: {
       deliver: ReturnType<typeof vi.fn>;
       log?: ReturnType<typeof createLog>;
       maxRecoveryMs?: number;
+      startupCutoff?: number;
     }) => {
       const result = await recoverPendingDeliveries({
         deliver: deliver as DeliverFn,
@@ -319,6 +334,7 @@ describe("delivery-queue", () => {
         cfg: baseCfg,
         stateDir: tmpDir,
         ...(maxRecoveryMs === undefined ? {} : { maxRecoveryMs }),
+        ...(startupCutoff === undefined ? {} : { startupCutoff }),
       });
       return { result, log };
     };
@@ -327,7 +343,7 @@ describe("delivery-queue", () => {
       // Manually create queue entries as if gateway crashed before delivery.
       await enqueueCrashRecoveryEntries();
       const deliver = vi.fn().mockResolvedValue([]);
-      const { result } = await runRecovery({ deliver });
+      const { result } = await runRecovery({ deliver, startupCutoff: Date.now() });
 
       expect(deliver).toHaveBeenCalledTimes(2);
       expect(result.recovered).toBe(2);
@@ -338,6 +354,25 @@ describe("delivery-queue", () => {
       // Queue should be empty after recovery.
       const remaining = await loadPendingDeliveries(tmpDir);
       expect(remaining).toHaveLength(0);
+    });
+
+    it("skips freshly-enqueued entries when startupCutoff is set (prevents duplicate delivery)", async () => {
+      // Regression: outbox worker fired within 1s of enqueue and double-delivered because
+      // fresh entries (retryCount=0, no lastAttemptAt) were immediately eligible.
+      // With startupCutoff set, entries enqueued after startup are skipped unless they have
+      // a prior attempt recorded (i.e., a transient failure that needs retry).
+      const startupCutoff = Date.now();
+      await enqueueDelivery(
+        { channel: "whatsapp", to: "+1", payloads: [{ text: "live" }] },
+        tmpDir,
+      );
+
+      const deliver = vi.fn().mockResolvedValue([]);
+      const { result } = await runRecovery({ deliver, startupCutoff });
+
+      expect(deliver).not.toHaveBeenCalled();
+      expect(result.recovered).toBe(0);
+      expect(result.deferredBackoff).toBe(0);
     });
 
     it("moves entries that exceeded max retries to terminal failed status", async () => {
@@ -492,6 +527,7 @@ describe("delivery-queue", () => {
         failed: 0,
         skippedMaxRetries: 0,
         deferredBackoff: 1,
+        skippedStartupCutoff: 0,
       });
 
       const remaining = await loadPendingDeliveries(tmpDir);
@@ -522,6 +558,7 @@ describe("delivery-queue", () => {
         failed: 0,
         skippedMaxRetries: 0,
         deferredBackoff: 1,
+        skippedStartupCutoff: 0,
       });
       expect(deliver).toHaveBeenCalledTimes(1);
       expect(deliver).toHaveBeenCalledWith(
@@ -551,6 +588,7 @@ describe("delivery-queue", () => {
         failed: 0,
         skippedMaxRetries: 0,
         deferredBackoff: 1,
+        skippedStartupCutoff: 0,
       });
       expect(firstDeliver).not.toHaveBeenCalled();
 
@@ -562,6 +600,7 @@ describe("delivery-queue", () => {
         failed: 0,
         skippedMaxRetries: 0,
         deferredBackoff: 0,
+        skippedStartupCutoff: 0,
       });
       expect(secondDeliver).toHaveBeenCalledTimes(1);
 
@@ -580,6 +619,7 @@ describe("delivery-queue", () => {
         failed: 0,
         skippedMaxRetries: 0,
         deferredBackoff: 0,
+        skippedStartupCutoff: 0,
       });
       expect(deliver).not.toHaveBeenCalled();
     });
