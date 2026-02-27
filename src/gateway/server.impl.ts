@@ -696,8 +696,8 @@ export async function startGatewayServer(
       pruneInboundJournal(INBOUND_PRUNE_AGE_MS);
 
       // Find turns still marked 'processing' — these are orphans from a crash.
-      // Skip very recent rows (minAgeMs=5s) in case a turn is still actively running.
-      const orphans = findProcessingInbound({ minAgeMs: 5_000 });
+      // minAgeMs=0 so quick restarts (e.g. process supervisor) recover in-flight turns.
+      const orphans = findProcessingInbound({ minAgeMs: 0 });
       if (orphans.length === 0) {
         return;
       }
@@ -759,7 +759,7 @@ export async function startGatewayServer(
               await deliverOutboundPayloads({
                 cfg: cfgAtStart,
                 channel: row.channel,
-                to: ctx.To ?? "",
+                to: ctx.OriginatingTo ?? ctx.To ?? "",
                 accountId: row.account_id || undefined,
                 payloads: [replyPayload],
                 threadId: ctx.MessageThreadId,
