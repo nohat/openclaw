@@ -73,6 +73,10 @@ import { buildGatewayCronService } from "./server-cron.js";
 import { startGatewayDiscovery } from "./server-discovery-runtime.js";
 import { applyGatewayLaneConcurrency } from "./server-lanes.js";
 import { startGatewayMaintenanceTimers } from "./server-maintenance.js";
+import {
+  type LifecycleWorkerHandle,
+  startMessageLifecycleWorkers,
+} from "./server-message-lifecycle.js";
 import { GATEWAY_EVENTS, listGatewayMethods } from "./server-methods-list.js";
 import { coreGatewayHandlers } from "./server-methods.js";
 import { createExecApprovalHandlers } from "./server-methods/exec-approval.js";
@@ -658,18 +662,16 @@ export async function startGatewayServer(
     void cron.start().catch((err) => logCron.error(`failed to start: ${String(err)}`));
   }
 
-  // Recover pending outbound deliveries from previous crash/restart.
+  let lifecycleWorkers: LifecycleWorkerHandle | null = null;
   if (!minimalTestGateway) {
-    void (async () => {
-      const { recoverPendingDeliveries } = await import("../infra/outbound/delivery-queue.js");
-      const { deliverOutboundPayloads } = await import("../infra/outbound/deliver.js");
-      const logRecovery = log.child("delivery-recovery");
-      await recoverPendingDeliveries({
-        deliver: deliverOutboundPayloads,
-        log: logRecovery,
+    try {
+      lifecycleWorkers = await startMessageLifecycleWorkers({
         cfg: cfgAtStart,
+        log: log.child("message-lifecycle"),
       });
-    })().catch((err) => log.error(`Delivery recovery failed: ${String(err)}`));
+    } catch (err) {
+      log.error(`Message lifecycle workers failed to start: ${String(err)}`);
+    }
   }
 
   const execApprovalManager = new ExecApprovalManager();
@@ -928,6 +930,9 @@ export async function startGatewayServer(
       authRateLimiter?.dispose();
       browserAuthRateLimiter.dispose();
       channelHealthMonitor?.stop();
+      await lifecycleWorkers?.stop().catch((err) => {
+        log.warn(`message-lifecycle worker shutdown failed: ${String(err)}`);
+      });
       clearSecretsRuntimeSnapshot();
       await close(opts);
     },
