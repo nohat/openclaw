@@ -94,6 +94,24 @@ describe("acceptInboundOrSkip", () => {
     expect(acceptInboundOrSkip(ctx2, { stateDir: tmpDir })).toBe(true);
   });
 
+  it("different peers with same message_id are not duplicates (e.g. Telegram per-chat IDs)", () => {
+    // Same channel, account, and message_id but different chat (OriginatingTo) — must both be accepted.
+    const ctx1 = makeCtx({
+      MessageSid: "42",
+      AccountId: "acct-1",
+      OriginatingTo: "chat-A",
+      To: "chat-A",
+    });
+    const ctx2 = makeCtx({
+      MessageSid: "42",
+      AccountId: "acct-1",
+      OriginatingTo: "chat-B",
+      To: "chat-B",
+    });
+    expect(acceptInboundOrSkip(ctx1, { stateDir: tmpDir })).toBe(true);
+    expect(acceptInboundOrSkip(ctx2, { stateDir: tmpDir })).toBe(true);
+  });
+
   it("uses PendingReplyId as the row id when provided", () => {
     const ctx = makeCtx({ PendingReplyId: "custom-pending-id-001", MessageSid: "msg-xyz" });
     const accepted = acceptInboundOrSkip(ctx, { stateDir: tmpDir });

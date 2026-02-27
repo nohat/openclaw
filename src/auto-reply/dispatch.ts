@@ -77,6 +77,9 @@ async function dispatchInboundMessageInternal({
         logVerbose(
           `dispatch: deduped inbound turn — channel=${channel} external_id=${externalId} account=${finalized.AccountId ?? ""} turn=${pendingReplyId}`,
         );
+        // Release dispatcher reservation so deduped turns don't leak registry entries.
+        dispatcher.markComplete();
+        await dispatcher.waitForIdle();
         return { queuedFinal: false, counts: dispatcher.getQueuedCounts() };
       }
     } catch (err) {

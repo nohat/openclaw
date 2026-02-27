@@ -177,6 +177,9 @@ describe("dispatchInboundMessage — journal integration", () => {
 
     expect(sendFinalReply).not.toHaveBeenCalled();
     expect(completeInboundTurn).not.toHaveBeenCalled();
+    // Dispatcher reservation must be released so deduped turns don't leak registry entries.
+    expect(dispatcher.markComplete).toHaveBeenCalled();
+    expect(dispatcher.waitForIdle).toHaveBeenCalled();
   });
 
   it("skips journal insert for orphan recovery re-dispatches", async () => {

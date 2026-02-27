@@ -43,6 +43,7 @@ export function ensureJournalSchema(db: DatabaseSync): void {
       channel     TEXT NOT NULL DEFAULT '',
       account_id  TEXT NOT NULL DEFAULT '',
       external_id TEXT,
+      dedupe_key  TEXT,
       session_key TEXT NOT NULL DEFAULT '',
       payload     TEXT NOT NULL DEFAULT '{}',
       received_at INTEGER NOT NULL,
@@ -53,12 +54,17 @@ export function ensureJournalSchema(db: DatabaseSync): void {
     );
   `);
 
-  // Unique index for dedup: same (channel, account_id, external_id) is a duplicate.
-  // WHERE clause excludes NULL external_id rows so messages without IDs always insert.
+  // Ensure dedupe_key column exists before creating index (migration for existing DBs).
+  ensureColumnExists(db, "inbound_events", "dedupe_key", "TEXT");
+
+  // Unique index for dedup: dedupe_key includes peer/thread so providers with
+  // per-chat message IDs (e.g. Telegram) don't incorrectly drop distinct messages.
+  // WHERE clause excludes NULL dedupe_key rows so messages without IDs always insert.
+  db.exec("DROP INDEX IF EXISTS idx_inbound_dedup");
   db.exec(`
     CREATE UNIQUE INDEX IF NOT EXISTS idx_inbound_dedup
-      ON inbound_events(channel, account_id, external_id)
-      WHERE external_id IS NOT NULL;
+      ON inbound_events(dedupe_key)
+      WHERE dedupe_key IS NOT NULL;
   `);
 
   db.exec(`
@@ -100,12 +106,18 @@ function registerProcessCleanupHook(): void {
   process.once("exit", closeJournalDbCache);
 }
 
+/** SQLite identifier pattern — prevents injection when used for DDL. */
+const SQL_IDENTIFIER = /^[a-zA-Z_][a-zA-Z0-9_]*$/;
+
 function ensureColumnExists(
   db: DatabaseSync,
   tableName: string,
   columnName: string,
   definition: string,
 ): void {
+  if (!SQL_IDENTIFIER.test(tableName) || !SQL_IDENTIFIER.test(columnName)) {
+    throw new Error(`Invalid table or column name: ${tableName}.${columnName}`);
+  }
   const rows = db.prepare(`PRAGMA table_info(${tableName})`).all() as Array<{
     name?: string | null;
   }>;
@@ -113,6 +125,7 @@ function ensureColumnExists(
   if (hasColumn) {
     return;
   }
+  // definition is allowlisted at call sites (INTEGER, TEXT, etc.); no user input.
   db.exec(`ALTER TABLE ${tableName} ADD COLUMN ${columnName} ${definition}`);
 }
 

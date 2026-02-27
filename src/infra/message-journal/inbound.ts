@@ -127,26 +127,26 @@ export function acceptInboundOrSkip(ctx: MsgContext, opts?: { stateDir?: string 
     messageIdFull: ctx.MessageSidFull,
   });
 
-  // When external_id is present, the unique index on (channel, account_id, external_id)
-  // will reject duplicates. We use OR IGNORE so duplicates return cleanly without throwing.
+  // When dedupeKey is present, the unique index on dedupe_key rejects duplicates.
+  // dedupeKey includes peer/thread so per-chat message IDs (e.g. Telegram) are scoped correctly.
   // When dedupeKey is null (no provider+messageId), we skip dedup entirely and always insert.
   try {
     if (dedupeKey && external_id) {
       // Use INSERT OR IGNORE; check changes() to detect whether the row was actually inserted.
       db.prepare(
         `INSERT OR IGNORE INTO inbound_events
-           (id, channel, account_id, external_id, session_key, payload, received_at, status)
-         VALUES (?, ?, ?, ?, ?, ?, ?, 'processing')`,
-      ).run(id, channel, account_id, external_id, session_key, payload, Date.now());
+           (id, channel, account_id, external_id, dedupe_key, session_key, payload, received_at, status)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'processing')`,
+      ).run(id, channel, account_id, external_id, dedupeKey, session_key, payload, Date.now());
       // If the unique index rejected the insert, changes() returns 0 → duplicate.
       const changes = db.prepare("SELECT changes() AS c").get() as { c: number };
       return changes.c > 0;
     } else {
-      // No external_id — always accept (cannot dedup without a message identifier).
+      // No dedupe key — always accept (cannot dedup without a message identifier).
       db.prepare(
         `INSERT INTO inbound_events
-           (id, channel, account_id, external_id, session_key, payload, received_at, status)
-         VALUES (?, ?, ?, NULL, ?, ?, ?, 'processing')`,
+           (id, channel, account_id, external_id, dedupe_key, session_key, payload, received_at, status)
+         VALUES (?, ?, ?, NULL, NULL, ?, ?, ?, 'processing')`,
       ).run(id, channel, account_id, session_key, payload, Date.now());
       return true;
     }
@@ -154,7 +154,7 @@ export function acceptInboundOrSkip(ctx: MsgContext, opts?: { stateDir?: string 
     const errMsg = err instanceof Error ? err.message : String(err);
     if (dedupeKey && external_id) {
       const now = Date.now();
-      const fallbackKey = buildFallbackDedupeKey(channel, account_id, external_id);
+      const fallbackKey = dedupeKey ?? buildFallbackDedupeKey(channel, account_id, external_id);
       const accepted = acceptFromDedupeFallback(fallbackKey, now);
       warnJournalFailure(
         `acceptInboundOrSkip: journal write failed (${errMsg}); using in-memory dedupe fallback for ${channel}/${account_id}/${external_id} (accepted=${accepted})`,
