@@ -6,6 +6,7 @@ import {
 } from "../../auto-reply/chunk.js";
 import type { ReplyPayload } from "../../auto-reply/types.js";
 import { resolveChannelMediaMaxBytes } from "../../channels/plugins/media-limits.js";
+import { normalizeChannelOutboundAdapter } from "../../channels/plugins/outbound/compat.js";
 import { loadChannelOutboundAdapter } from "../../channels/plugins/outbound/load.js";
 import type {
   ChannelOutboundAdapter,
@@ -134,8 +135,16 @@ async function createChannelHandler(params: ChannelHandlerParams): Promise<Chann
 function createPluginHandler(
   params: ChannelHandlerParams & { outbound?: ChannelOutboundAdapter },
 ): ChannelHandler | null {
-  const outbound = params.outbound;
-  if (!outbound?.sendText || !outbound?.sendMedia) {
+  const normalized = normalizeChannelOutboundAdapter({
+    channelId: params.channel,
+    adapter: params.outbound,
+    warnLegacy: (msg) => log.warn(msg),
+  });
+  if (!normalized) {
+    return null;
+  }
+  const outbound = normalized.adapter;
+  if (!outbound.sendText || !outbound.sendMedia) {
     return null;
   }
   const baseCtx = createChannelOutboundContextBase(params);
@@ -155,9 +164,9 @@ function createPluginHandler(
     chunker,
     chunkerMode,
     textChunkLimit: outbound.textChunkLimit,
-    sendPayload: outbound.sendPayload
+    sendPayload: outbound.sendFinal
       ? async (payload, overrides) =>
-          outbound.sendPayload!({
+          outbound.sendFinal({
             ...resolveCtx(overrides),
             text: payload.text ?? "",
             mediaUrl: payload.mediaUrl,
@@ -221,6 +230,8 @@ type DeliverOutboundPayloadsCoreParams = {
     mediaUrls?: string[];
   };
   silent?: boolean;
+  /** Links outbox queue rows to a durable message turn. */
+  turnId?: string;
 };
 
 type DeliverOutboundPayloadsParams = DeliverOutboundPayloadsCoreParams & {
@@ -247,6 +258,7 @@ export async function deliverOutboundPayloads(
         gifPlayback: params.gifPlayback,
         silent: params.silent,
         mirror: params.mirror,
+        turnId: params.turnId,
       }).catch(() => null); // Best-effort — don't block delivery if queue write fails.
 
   // Wrap onError to detect partial failures under bestEffort mode.
