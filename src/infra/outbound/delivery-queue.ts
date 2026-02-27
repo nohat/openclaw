@@ -9,6 +9,7 @@ import {
   isLifecycleDbInMemory,
   runLifecycleTransaction,
 } from "../message-lifecycle/db.js";
+import { finalizeTurn } from "../message-lifecycle/turns.js";
 import { generateSecureUuid } from "../secure-random.js";
 import type { OutboundChannel } from "./targets.js";
 
@@ -73,6 +74,12 @@ export type RecoverySummary = {
   skippedStartupCutoff: number;
 };
 
+export type OutboxTurnStatus = {
+  queued: number;
+  delivered: number;
+  failed: number;
+};
+
 export type DeliverFn = (
   params: {
     cfg: OpenClawConfig;
@@ -103,6 +110,60 @@ function resolveDeliveryMaxAgeMs(cfg: OpenClawConfig): number {
 function resolveExpireAction(cfg: OpenClawConfig): "fail" | "deliver" {
   const action = cfg.messages?.delivery?.expireAction;
   return action === "deliver" ? "deliver" : "fail";
+}
+
+async function maybeFinalizeTurnDelivered(turnId: string, stateDir?: string): Promise<void> {
+  const db = getLifecycleDb(stateDir);
+  try {
+    const row = db
+      .prepare(
+        `SELECT
+           SUM(CASE WHEN status IN ('queued','failed_retryable') THEN 1 ELSE 0 END) AS active_count,
+           SUM(CASE WHEN status='delivered' THEN 1 ELSE 0 END) AS delivered_count,
+           SUM(CASE WHEN status IN ('failed_terminal','expired') THEN 1 ELSE 0 END) AS failed_count
+         FROM message_outbox
+         WHERE turn_id = ?`,
+      )
+      .get(turnId) as
+      | { active_count: number | null; delivered_count: number | null; failed_count: number | null }
+      | undefined;
+    if (!row) {
+      return;
+    }
+    const active = Number(row.active_count ?? 0);
+    const delivered = Number(row.delivered_count ?? 0);
+    const failed = Number(row.failed_count ?? 0);
+    if (active === 0 && delivered > 0 && failed === 0) {
+      finalizeTurn(turnId, "delivered", { stateDir });
+    }
+  } catch (err) {
+    logVerbose(`delivery-queue: maybeFinalizeTurnDelivered failed: ${String(err)}`);
+  }
+}
+
+async function maybeFinalizeTurnFailed(turnId: string, stateDir?: string): Promise<void> {
+  const db = getLifecycleDb(stateDir);
+  try {
+    const row = db
+      .prepare(
+        `SELECT
+           SUM(CASE WHEN status IN ('queued','failed_retryable') THEN 1 ELSE 0 END) AS active_count,
+           SUM(CASE WHEN status IN ('failed_terminal','expired') THEN 1 ELSE 0 END) AS failed_count
+         FROM message_outbox
+         WHERE turn_id = ?`,
+      )
+      .get(turnId) as { active_count: number | null; failed_count: number | null } | undefined;
+    if (!row) {
+      return;
+    }
+    const active = Number(row.active_count ?? 0);
+    const failed = Number(row.failed_count ?? 0);
+    if (active === 0 && failed > 0) {
+      finalizeTurn(turnId, "failed", { stateDir });
+    }
+  } catch (err) {
+    logVerbose(`delivery-queue: maybeFinalizeTurnFailed failed: ${String(err)}`);
+  }
 }
 
 export async function ensureQueueDir(stateDir?: string): Promise<string> {
@@ -162,11 +223,17 @@ export async function enqueueDelivery(
 export async function ackDelivery(id: string, stateDir?: string): Promise<void> {
   const db = getLifecycleDb(stateDir);
   try {
+    const row = db.prepare(`SELECT turn_id FROM message_outbox WHERE id=?`).get(id) as
+      | { turn_id: string | null }
+      | undefined;
     db.prepare(
       `UPDATE message_outbox
          SET status='delivered', delivered_at=?, completed_at=?
        WHERE id=?`,
     ).run(Date.now(), Date.now(), id);
+    if (row?.turn_id) {
+      await maybeFinalizeTurnDelivered(row.turn_id, stateDir);
+    }
   } catch (err) {
     logVerbose(`delivery-queue: ackDelivery failed: ${String(err)}`);
   }
@@ -183,9 +250,9 @@ export async function failDelivery(id: string, error: string, stateDir?: string)
     // this entry, the recovery worker should not resurrect it.
     const row = db
       .prepare(
-        `SELECT attempt_count FROM message_outbox WHERE id=? AND status IN ('queued','failed_retryable')`,
+        `SELECT attempt_count, turn_id FROM message_outbox WHERE id=? AND status IN ('queued','failed_retryable')`,
       )
-      .get(id) as { attempt_count: number } | undefined;
+      .get(id) as { attempt_count: number; turn_id: string | null } | undefined;
     if (!row) {
       return;
     }
@@ -200,6 +267,9 @@ export async function failDelivery(id: string, error: string, stateDir?: string)
                terminal_reason=?
          WHERE id=?`,
       ).run(error, now, error, id);
+      if (row.turn_id) {
+        await maybeFinalizeTurnFailed(row.turn_id, stateDir);
+      }
       return;
     }
     const nextCount = row.attempt_count + 1;
@@ -215,6 +285,9 @@ export async function failDelivery(id: string, error: string, stateDir?: string)
                terminal_reason=?
          WHERE id=?`,
       ).run(nextCount, error, now, now, error, id);
+      if (row.turn_id) {
+        await maybeFinalizeTurnFailed(row.turn_id, stateDir);
+      }
       return;
     }
     db.prepare(
@@ -314,6 +387,9 @@ export async function loadPendingDeliveries(
 export async function moveToFailed(id: string, stateDir?: string): Promise<void> {
   const db = getLifecycleDb(stateDir);
   try {
+    const row = db.prepare(`SELECT turn_id FROM message_outbox WHERE id=?`).get(id) as
+      | { turn_id: string | null }
+      | undefined;
     db.prepare(
       `UPDATE message_outbox
          SET status='failed_terminal',
@@ -322,6 +398,9 @@ export async function moveToFailed(id: string, stateDir?: string): Promise<void>
              completed_at=?
        WHERE id=?`,
     ).run(Date.now(), id);
+    if (row?.turn_id) {
+      await maybeFinalizeTurnFailed(row.turn_id, stateDir);
+    }
   } catch (err) {
     logVerbose(`delivery-queue: moveToFailed failed: ${String(err)}`);
   }
@@ -361,6 +440,37 @@ export function isEntryEligibleForRecoveryRetry(
     return { eligible: true };
   }
   return { eligible: false, remainingBackoffMs: nextEligibleAt - now };
+}
+
+/** Summarize outbox statuses for a linked turn. */
+export function getOutboxStatusForTurn(turnId: string, stateDir?: string): OutboxTurnStatus {
+  const db = getLifecycleDb(stateDir);
+  try {
+    const row = db
+      .prepare(
+        `SELECT
+           SUM(CASE WHEN status IN ('queued','failed_retryable') THEN 1 ELSE 0 END) AS queued_count,
+           SUM(CASE WHEN status='delivered' THEN 1 ELSE 0 END) AS delivered_count,
+           SUM(CASE WHEN status IN ('failed_terminal','expired') THEN 1 ELSE 0 END) AS failed_count
+         FROM message_outbox
+         WHERE turn_id = ?`,
+      )
+      .get(turnId) as
+      | {
+          queued_count: number | bigint | null;
+          delivered_count: number | bigint | null;
+          failed_count: number | bigint | null;
+        }
+      | undefined;
+    return {
+      queued: Number(row?.queued_count ?? 0),
+      delivered: Number(row?.delivered_count ?? 0),
+      failed: Number(row?.failed_count ?? 0),
+    };
+  } catch (err) {
+    logVerbose(`delivery-queue: getOutboxStatusForTurn failed: ${String(err)}`);
+    return { queued: 0, delivered: 0, failed: 0 };
+  }
 }
 
 /**
