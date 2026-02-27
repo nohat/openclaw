@@ -320,8 +320,9 @@ export async function dispatchReplyFromConfig(params: {
           cfg,
         });
         queuedFinal = result.ok;
-        routedFinalCount += 1;
-        if (!result.ok) {
+        if (result.ok) {
+          routedFinalCount += 1;
+        } else {
           logVerbose(
             `dispatch-from-config: route-reply (abort) failed: ${result.error ?? "unknown error"}`,
           );
@@ -509,7 +510,9 @@ export async function dispatchReplyFromConfig(params: {
           );
         }
         queuedFinal = result.ok || queuedFinal;
-        routedFinalCount += 1;
+        if (result.ok) {
+          routedFinalCount += 1;
+        }
       } else {
         attemptedFinal += 1;
         queuedFinal = dispatcher.sendFinalReply(ttsReply) || queuedFinal;
@@ -555,8 +558,9 @@ export async function dispatchReplyFromConfig(params: {
               cfg,
             });
             queuedFinal = result.ok || queuedFinal;
-            routedFinalCount += 1;
-            if (!result.ok) {
+            if (result.ok) {
+              routedFinalCount += 1;
+            } else {
               logVerbose(
                 `dispatch-from-config: route-reply (tts-only) failed: ${result.error ?? "unknown error"}`,
               );

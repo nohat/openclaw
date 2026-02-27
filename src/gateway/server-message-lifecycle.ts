@@ -140,6 +140,11 @@ export async function startMessageLifecycleWorkers(
           }
         },
       });
+      // Outbox rows are created by routeReply → deliverOutboundPayloads in the deliver
+      // closure above. Disabling setDeliveryQueueContext prevents the dispatcher from
+      // also enqueueing via deliveryQueueContext, which would create duplicate outbox rows
+      // when shouldRouteToOriginating is false (same-surface direct delivery path).
+      dispatcher.setDeliveryQueueContext = undefined;
 
       try {
         await dispatchResumedTurn({
