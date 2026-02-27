@@ -60,6 +60,7 @@ async function dispatchInboundMessageInternal({
   const shouldTrackTurn = !isOrphanReplyRecovery && replyOptions?.isHeartbeat !== true;
 
   let pendingReplyId: string | undefined;
+  let deliveryObserved = false;
   if (shouldTrackTurn) {
     // Generate a stable turn ID if the caller didn't provide one.
     if (!finalized.PendingReplyId?.trim()) {
@@ -86,6 +87,23 @@ async function dispatchInboundMessageInternal({
       // Journal errors must not block message processing.
       logVerbose(`dispatch: journal accept failed (continuing): ${String(err)}`);
     }
+
+    // Persist post-send evidence as soon as any provider send succeeds.
+    // This prevents duplicate orphan replay for channels that bypass outbound journaling.
+    if (pendingReplyId && dispatcher.setDeliveryObserver) {
+      const pendingId = pendingReplyId;
+      dispatcher.setDeliveryObserver(() => {
+        if (deliveryObserved) {
+          return;
+        }
+        deliveryObserved = true;
+        try {
+          completeInboundTurn(pendingId, "delivered");
+        } catch (err) {
+          logVerbose(`dispatch: journal early-complete failed: ${String(err)}`);
+        }
+      });
+    }
   }
 
   const result = await withReplyDispatcher({
@@ -101,7 +119,7 @@ async function dispatchInboundMessageInternal({
   });
 
   // Mark turn delivered after dispatcher fully drains (including queued replies).
-  if (pendingReplyId) {
+  if (pendingReplyId && !deliveryObserved) {
     try {
       completeInboundTurn(pendingReplyId, "delivered");
     } catch (err) {

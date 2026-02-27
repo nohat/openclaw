@@ -150,6 +150,35 @@ describe("dispatchInboundMessage — journal integration", () => {
     expect(vi.mocked(completeInboundTurn).mock.calls[0][1]).toBe("delivered");
   });
 
+  it("marks delivered on first successful send when dispatcher exposes delivery observer", async () => {
+    let observer: ((info: { kind: "tool" | "block" | "final" }) => void) | undefined;
+    const dispatcher: ReplyDispatcher = {
+      sendToolResult: () => true,
+      sendBlockReply: () => true,
+      sendFinalReply: () => {
+        observer?.({ kind: "final" });
+        return true;
+      },
+      setDeliveryObserver: (nextObserver) => {
+        observer = nextObserver;
+      },
+      getQueuedCounts: () => ({ tool: 0, block: 0, final: 0 }),
+      markComplete: vi.fn(),
+      waitForIdle: vi.fn(async () => {}),
+    };
+
+    await dispatchInboundMessage({
+      ctx: buildTestCtx(),
+      cfg: {} as OpenClawConfig,
+      dispatcher,
+      replyResolver: async () => ({ text: "ok" }),
+    });
+
+    // Early post-send marker should suppress duplicate terminal transition at function end.
+    expect(completeInboundTurn).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(completeInboundTurn).mock.calls[0][1]).toBe("delivered");
+  });
+
   it("skips journal tracking for heartbeats", async () => {
     await dispatchInboundMessage({
       ctx: buildTestCtx(),

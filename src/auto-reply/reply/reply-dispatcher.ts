@@ -75,6 +75,11 @@ export type ReplyDispatcher = {
   sendToolResult: (payload: ReplyPayload) => boolean;
   sendBlockReply: (payload: ReplyPayload) => boolean;
   sendFinalReply: (payload: ReplyPayload) => boolean;
+  /**
+   * Register a callback invoked after each successful provider send.
+   * Used by inbound journaling to persist post-send delivery evidence.
+   */
+  setDeliveryObserver?: (observer: (info: { kind: ReplyDispatchKind }) => void) => void;
   waitForIdle: () => Promise<void>;
   getQueuedCounts: () => Record<ReplyDispatchKind, number>;
   markComplete: () => void;
@@ -117,6 +122,7 @@ export function createReplyDispatcher(options: ReplyDispatcherOptions): ReplyDis
     block: 0,
     final: 0,
   };
+  let deliveryObserver: ((info: { kind: ReplyDispatchKind }) => void) | undefined;
 
   // Register this dispatcher globally for gateway restart coordination.
   const { unregister } = registerDispatcher({
@@ -156,6 +162,11 @@ export function createReplyDispatcher(options: ReplyDispatcherOptions): ReplyDis
         // Safe: deliver is called inside an async .then() callback, so even a synchronous
         // throw becomes a rejection that flows through .catch()/.finally(), ensuring cleanup.
         await options.deliver(normalized, { kind });
+        try {
+          deliveryObserver?.({ kind });
+        } catch {
+          // Delivery observer must not affect outbound flow.
+        }
       })
       .catch((err) => {
         options.onError?.(err, { kind });
@@ -202,6 +213,9 @@ export function createReplyDispatcher(options: ReplyDispatcherOptions): ReplyDis
     sendToolResult: (payload) => enqueue("tool", payload),
     sendBlockReply: (payload) => enqueue("block", payload),
     sendFinalReply: (payload) => enqueue("final", payload),
+    setDeliveryObserver: (observer) => {
+      deliveryObserver = observer;
+    },
     waitForIdle: () => sendChain,
     getQueuedCounts: () => ({ ...queuedCounts }),
     markComplete,
