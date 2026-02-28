@@ -321,9 +321,21 @@ export const telegramPlugin: ChannelPlugin<ResolvedTelegramAccount, TelegramProb
     textChunkLimit: 4000,
     pollMaxOptions: 10,
     sendPayload: async (ctx) => {
-      const media = ctx.payload.mediaUrl ?? ctx.payload.mediaUrls?.[0];
-      if (media) {
-        return telegramPlugin.outbound!.sendMedia!({ ...ctx, mediaUrl: media });
+      const urls = ctx.payload.mediaUrls?.length
+        ? ctx.payload.mediaUrls
+        : ctx.payload.mediaUrl
+          ? [ctx.payload.mediaUrl]
+          : [];
+      if (urls.length > 0) {
+        let lastResult;
+        for (let i = 0; i < urls.length; i++) {
+          lastResult = await telegramPlugin.outbound!.sendMedia!({
+            ...ctx,
+            text: i === 0 ? (ctx.payload.text ?? "") : "",
+            mediaUrl: urls[i],
+          });
+        }
+        return lastResult!;
       }
       return telegramPlugin.outbound!.sendText!({ ...ctx });
     },

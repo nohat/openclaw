@@ -309,9 +309,21 @@ export const bluebubblesPlugin: ChannelPlugin<ResolvedBlueBubblesAccount> = {
       return { ok: true, to: trimmed };
     },
     sendPayload: async (ctx) => {
-      const media = ctx.payload.mediaUrl ?? ctx.payload.mediaUrls?.[0];
-      if (media) {
-        return bluebubblesPlugin.outbound!.sendMedia!({ ...ctx, mediaUrl: media });
+      const urls = ctx.payload.mediaUrls?.length
+        ? ctx.payload.mediaUrls
+        : ctx.payload.mediaUrl
+          ? [ctx.payload.mediaUrl]
+          : [];
+      if (urls.length > 0) {
+        let lastResult;
+        for (let i = 0; i < urls.length; i++) {
+          lastResult = await bluebubblesPlugin.outbound!.sendMedia!({
+            ...ctx,
+            text: i === 0 ? (ctx.payload.text ?? "") : "",
+            mediaUrl: urls[i],
+          });
+        }
+        return lastResult!;
       }
       return bluebubblesPlugin.outbound!.sendText!({ ...ctx });
     },
