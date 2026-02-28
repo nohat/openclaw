@@ -157,14 +157,25 @@ async function dispatchInboundMessageInternal({
       } else if (attemptedFinal > 0 && !result.queuedFinal) {
         recordTurnRecoveryFailure(turnId, "final delivery did not queue successfully");
       } else if (attemptedFinal > 0 && result.queuedFinal) {
-        // Fail-open: only mark delivered if at least one provider send actually succeeded.
-        // queuedFinal just means the dispatcher accepted the payload — the actual send
-        // may have failed silently via onError.
-        const actualSends = dispatcher.getDeliveryStats?.()?.successfulSends ?? 0;
-        if (actualSends > 0) {
+        // Sends may have completed between the first outbox check and now (async ack).
+        // Re-check outbox as the authoritative source of truth — this covers both
+        // direct sends and ACP-routed turns where the dispatcher counter may not reflect
+        // the actual delivery outcome.
+        const refreshed = getOutboxStatusForTurn(turnId);
+        if (refreshed.delivered > 0) {
           finalizeTurn(turnId, "delivered");
+        } else if (refreshed.failed > 0 && refreshed.queued === 0) {
+          finalizeTurn(turnId, "failed");
+        } else if (refreshed.queued > 0) {
+          markTurnDeliveryPending(turnId);
         } else {
-          recordTurnRecoveryFailure(turnId, "final send queued but no successful sends");
+          // Outbox still empty — fall back to dispatcher counter as last resort.
+          const actualSends = dispatcher.getDeliveryStats?.()?.successfulSends ?? 0;
+          if (actualSends > 0) {
+            finalizeTurn(turnId, "delivered");
+          } else {
+            recordTurnRecoveryFailure(turnId, "final send queued but no successful sends");
+          }
         }
       } else {
         // No outbox rows and no final attempted — e.g. command-only turn with no reply.
