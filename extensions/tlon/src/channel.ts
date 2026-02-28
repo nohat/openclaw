@@ -156,6 +156,12 @@ const tlonOutbound: ChannelOutboundAdapter = {
   },
 };
 
+tlonOutbound.sendPayload = async (ctx) => {
+  const media = ctx.payload.mediaUrl ?? ctx.payload.mediaUrls?.[0];
+  if (media) return tlonOutbound.sendMedia!({ ...ctx, mediaUrl: media });
+  return tlonOutbound.sendText!({ ...ctx });
+};
+
 export const tlonPlugin: ChannelPlugin = {
   id: TLON_CHANNEL_ID,
   meta: {

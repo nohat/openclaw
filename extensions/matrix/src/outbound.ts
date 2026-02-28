@@ -7,6 +7,23 @@ export const matrixOutbound: ChannelOutboundAdapter = {
   chunker: (text, limit) => getMatrixRuntime().channel.text.chunkMarkdownText(text, limit),
   chunkerMode: "markdown",
   textChunkLimit: 4000,
+  sendPayload: async (ctx) => {
+    const media = ctx.payload.mediaUrl ?? ctx.payload.mediaUrls?.[0];
+    const send = ctx.deps?.sendMatrix ?? sendMessageMatrix;
+    const resolvedThreadId =
+      ctx.threadId !== undefined && ctx.threadId !== null ? String(ctx.threadId) : undefined;
+    const result = await send(ctx.to, ctx.text, {
+      mediaUrl: media ?? undefined,
+      replyToId: ctx.replyToId ?? undefined,
+      threadId: resolvedThreadId,
+      accountId: ctx.accountId ?? undefined,
+    });
+    return {
+      channel: "matrix",
+      messageId: result.messageId,
+      roomId: result.roomId,
+    };
+  },
   sendText: async ({ to, text, deps, replyToId, threadId, accountId }) => {
     const send = deps?.sendMatrix ?? sendMessageMatrix;
     const resolvedThreadId =

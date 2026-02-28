@@ -185,3 +185,13 @@ export const twitchOutbound: ChannelOutboundAdapter = {
     });
   },
 };
+
+twitchOutbound.sendPayload = async (ctx) => {
+  const payload = (ctx as Record<string, unknown>).payload as {
+    mediaUrl?: string;
+    mediaUrls?: string[];
+  };
+  const media = payload.mediaUrl ?? payload.mediaUrls?.[0];
+  if (media) return twitchOutbound.sendMedia!({ ...ctx, mediaUrl: media });
+  return twitchOutbound.sendText!({ ...ctx });
+};

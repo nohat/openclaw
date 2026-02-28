@@ -43,6 +43,47 @@ export const feishuOutbound: ChannelOutboundAdapter = {
   chunker: (text, limit) => getFeishuRuntime().channel.text.chunkMarkdownText(text, limit),
   chunkerMode: "markdown",
   textChunkLimit: 4000,
+  sendPayload: async (ctx) => {
+    const media = ctx.payload.mediaUrl ?? ctx.payload.mediaUrls?.[0];
+    if (media) {
+      // Send text first if provided
+      if (ctx.text?.trim()) {
+        await sendMessageFeishu({
+          cfg: ctx.cfg,
+          to: ctx.to,
+          text: ctx.text,
+          accountId: ctx.accountId ?? undefined,
+        });
+      }
+      try {
+        const result = await sendMediaFeishu({
+          cfg: ctx.cfg,
+          to: ctx.to,
+          mediaUrl: media,
+          accountId: ctx.accountId ?? undefined,
+          mediaLocalRoots: ctx.mediaLocalRoots,
+        });
+        return { channel: "feishu", ...result };
+      } catch (err) {
+        console.error(`[feishu] sendMediaFeishu failed:`, err);
+        const fallbackText = `\u{1F4CE} ${media}`;
+        const result = await sendMessageFeishu({
+          cfg: ctx.cfg,
+          to: ctx.to,
+          text: fallbackText,
+          accountId: ctx.accountId ?? undefined,
+        });
+        return { channel: "feishu", ...result };
+      }
+    }
+    const result = await sendMessageFeishu({
+      cfg: ctx.cfg,
+      to: ctx.to,
+      text: ctx.text ?? "",
+      accountId: ctx.accountId ?? undefined,
+    });
+    return { channel: "feishu", ...result };
+  },
   sendText: async ({ cfg, to, text, accountId }) => {
     // Scheme A compatibility shim:
     // when upstream accidentally returns a local image path as plain text,
