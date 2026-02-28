@@ -332,9 +332,24 @@ export const slackPlugin: ChannelPlugin<ResolvedSlackAccount> = {
       const botToken = account.botToken?.trim();
       const tokenOverride = token && token !== botToken ? token : undefined;
       const threadTsValue = ctx.replyToId ?? ctx.threadId;
-      const media = ctx.payload.mediaUrl ?? ctx.payload.mediaUrls?.[0];
+      const urls = ctx.payload.mediaUrls?.length
+        ? ctx.payload.mediaUrls
+        : ctx.payload.mediaUrl
+          ? [ctx.payload.mediaUrl]
+          : [];
+      if (urls.length > 0) {
+        let lastResult;
+        for (let i = 0; i < urls.length; i++) {
+          lastResult = await send(ctx.to, i === 0 ? ctx.text : "", {
+            mediaUrl: urls[i],
+            threadTs: threadTsValue != null ? String(threadTsValue) : undefined,
+            accountId: ctx.accountId ?? undefined,
+            ...(tokenOverride ? { token: tokenOverride } : {}),
+          });
+        }
+        return { channel: "slack", ...lastResult! };
+      }
       const result = await send(ctx.to, ctx.text, {
-        ...(media ? { mediaUrl: media } : {}),
         threadTs: threadTsValue != null ? String(threadTsValue) : undefined,
         accountId: ctx.accountId ?? undefined,
         ...(tokenOverride ? { token: tokenOverride } : {}),

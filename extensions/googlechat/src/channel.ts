@@ -403,8 +403,12 @@ export const googlechatPlugin: ChannelPlugin<ResolvedGoogleChatAccount> = {
       };
     },
     sendPayload: async (ctx) => {
-      const media = ctx.payload.mediaUrl ?? ctx.payload.mediaUrls?.[0];
-      if (media) {
+      const urls = ctx.payload.mediaUrls?.length
+        ? ctx.payload.mediaUrls
+        : ctx.payload.mediaUrl
+          ? [ctx.payload.mediaUrl]
+          : [];
+      if (urls.length > 0) {
         const account = resolveGoogleChatAccount({ cfg: ctx.cfg, accountId: ctx.accountId });
         const space = await resolveGoogleChatOutboundSpace({ account, target: ctx.to });
         const thread = (ctx.threadId ?? ctx.replyToId ?? undefined) as string | undefined;
@@ -420,32 +424,35 @@ export const googlechatPlugin: ChannelPlugin<ResolvedGoogleChatAccount> = {
             (cfg.channels?.["googlechat"] as { mediaMaxMb?: number } | undefined)?.mediaMaxMb,
           accountId: ctx.accountId,
         });
-        const loaded = await runtime.channel.media.fetchRemoteMedia({
-          url: media,
-          maxBytes: maxBytes ?? (account.config.mediaMaxMb ?? 20) * 1024 * 1024,
-        });
-        const upload = await uploadGoogleChatAttachment({
-          account,
-          space,
-          filename: loaded.fileName ?? "attachment",
-          buffer: loaded.buffer,
-          contentType: loaded.contentType,
-        });
-        const result = await sendGoogleChatMessage({
-          account,
-          space,
-          text: ctx.text,
-          thread,
-          attachments: upload.attachmentUploadToken
-            ? [
-                {
-                  attachmentUploadToken: upload.attachmentUploadToken,
-                  contentName: loaded.fileName,
-                },
-              ]
-            : undefined,
-        });
-        return { channel: "googlechat", messageId: result?.messageName ?? "", chatId: space };
+        let lastResult;
+        for (let i = 0; i < urls.length; i++) {
+          const loaded = await runtime.channel.media.fetchRemoteMedia({
+            url: urls[i],
+            maxBytes: maxBytes ?? (account.config.mediaMaxMb ?? 20) * 1024 * 1024,
+          });
+          const upload = await uploadGoogleChatAttachment({
+            account,
+            space,
+            filename: loaded.fileName ?? "attachment",
+            buffer: loaded.buffer,
+            contentType: loaded.contentType,
+          });
+          lastResult = await sendGoogleChatMessage({
+            account,
+            space,
+            text: i === 0 ? ctx.text : "",
+            thread,
+            attachments: upload.attachmentUploadToken
+              ? [
+                  {
+                    attachmentUploadToken: upload.attachmentUploadToken,
+                    contentName: loaded.fileName,
+                  },
+                ]
+              : undefined,
+          });
+        }
+        return { channel: "googlechat", messageId: lastResult?.messageName ?? "", chatId: space };
       }
       const account = resolveGoogleChatAccount({ cfg: ctx.cfg, accountId: ctx.accountId });
       const space = await resolveGoogleChatOutboundSpace({ account, target: ctx.to });

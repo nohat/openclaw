@@ -178,22 +178,41 @@ export function createSynologyChatPlugin() {
       deliveryMode: "gateway" as const,
       textChunkLimit: 2000,
 
-      sendPayload: async (ctx: any) => {
+      sendPayload: async (ctx) => {
         const account: ResolvedSynologyChatAccount =
-          ctx.account ?? resolveAccount({}, ctx.accountId);
+          ((ctx as Record<string, unknown>).account as ResolvedSynologyChatAccount | undefined) ??
+          resolveAccount({}, ctx.accountId);
         if (!account.incomingUrl) {
           throw new Error("Synology Chat incoming URL not configured");
         }
-        const media = ctx.payload.mediaUrl ?? ctx.payload.mediaUrls?.[0];
-        if (media) {
-          const ok = await sendFileUrl(
-            account.incomingUrl,
-            media,
-            ctx.to,
-            account.allowInsecureSsl,
-          );
-          if (!ok) {
-            throw new Error("Failed to send media to Synology Chat");
+        const urls = ctx.payload.mediaUrls?.length
+          ? ctx.payload.mediaUrls
+          : ctx.payload.mediaUrl
+            ? [ctx.payload.mediaUrl]
+            : [];
+        if (urls.length > 0) {
+          for (let i = 0; i < urls.length; i++) {
+            if (i === 0 && ctx.text) {
+              // Send text with first media URL
+              const okText = await sendMessage(
+                account.incomingUrl,
+                ctx.text,
+                ctx.to,
+                account.allowInsecureSsl,
+              );
+              if (!okText) {
+                throw new Error("Failed to send message to Synology Chat");
+              }
+            }
+            const ok = await sendFileUrl(
+              account.incomingUrl,
+              urls[i],
+              ctx.to,
+              account.allowInsecureSsl,
+            );
+            if (!ok) {
+              throw new Error("Failed to send media to Synology Chat");
+            }
           }
           return { channel: CHANNEL_ID, messageId: `sc-${Date.now()}`, chatId: ctx.to };
         }
