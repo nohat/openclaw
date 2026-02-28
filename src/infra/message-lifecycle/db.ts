@@ -145,6 +145,20 @@ export function clearLifecycleDbCacheForTest(): void {
   closeLifecycleDbCache();
 }
 
+/** Truncate all lifecycle tables and close DB connections. Use in test harnesses
+ *  that share the default state directory across test cases. */
+export function resetLifecycleDbForTest(): void {
+  for (const db of DB_CACHE.values()) {
+    try {
+      db.exec("DELETE FROM message_turns");
+      db.exec("DELETE FROM message_outbox");
+    } catch {
+      // Table may not exist yet; ignore.
+    }
+  }
+  closeLifecycleDbCache();
+}
+
 export function runLifecycleTransaction<T>(db: DatabaseSync, op: () => T): T {
   db.exec("BEGIN IMMEDIATE");
   try {

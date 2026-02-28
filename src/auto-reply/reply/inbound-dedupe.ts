@@ -1,5 +1,6 @@
 import { logVerbose, shouldLogVerbose } from "../../globals.js";
 import { createDedupeCache, type DedupeCache } from "../../infra/dedupe.js";
+import { resetLifecycleDbForTest } from "../../infra/message-lifecycle/db.js";
 import type { MsgContext } from "../templating.js";
 
 const DEFAULT_INBOUND_DEDUPE_TTL_MS = 20 * 60_000;
@@ -52,4 +53,8 @@ export function shouldSkipDuplicateInbound(
 
 export function resetInboundDedupe(): void {
   inboundDedupeCache.clear();
+  // Also truncate persistent lifecycle tables and close DB connections so
+  // tests sharing the default state directory don't hit dedupe_key collisions
+  // from previous test cases.
+  resetLifecycleDbForTest();
 }
