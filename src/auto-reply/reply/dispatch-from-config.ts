@@ -98,6 +98,8 @@ export async function dispatchReplyFromConfig(params: {
   dispatcher: ReplyDispatcher;
   replyOptions?: Omit<GetReplyOptions, "onToolResult" | "onBlockReply">;
   replyResolver?: typeof getReplyFromConfig;
+  /** When true, skip inbound message deduplication (used for resumed/replayed turns). */
+  skipInboundDedupe?: boolean;
 }): Promise<DispatchFromConfigResult> {
   const { ctx, cfg, dispatcher } = params;
   const diagnosticsEnabled = isDiagnosticsEnabled(cfg);
@@ -153,7 +155,7 @@ export async function dispatchReplyFromConfig(params: {
     });
   };
 
-  if (shouldSkipDuplicateInbound(ctx)) {
+  if (!params.skipInboundDedupe && shouldSkipDuplicateInbound(ctx)) {
     recordProcessed("skipped", { reason: "duplicate" });
     return { queuedFinal: false, attemptedFinal: 0, counts: dispatcher.getQueuedCounts() };
   }
