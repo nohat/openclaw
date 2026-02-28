@@ -518,6 +518,21 @@ export const zalouserPlugin: ChannelPlugin<ResolvedZalouserAccount> = {
     chunker: chunkTextForOutbound,
     chunkerMode: "text",
     textChunkLimit: 2000,
+    sendPayload: async ({ to, payload, accountId, cfg }) => {
+      const account = resolveZalouserAccountSync({ cfg: cfg, accountId });
+      const media = payload.mediaUrl ?? payload.mediaUrls?.[0];
+      const text = payload.text ?? "";
+      const result = await sendMessageZalouser(to, text, {
+        profile: account.profile,
+        ...(media ? { mediaUrl: media } : {}),
+      });
+      return {
+        channel: "zalouser",
+        ok: result.ok,
+        messageId: result.messageId ?? "",
+        error: result.error ? new Error(result.error) : undefined,
+      };
+    },
     sendText: async ({ to, text, accountId, cfg }) => {
       const account = resolveZalouserAccountSync({ cfg: cfg, accountId });
       const result = await sendMessageZalouser(to, text, { profile: account.profile });

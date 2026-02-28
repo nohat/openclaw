@@ -80,6 +80,54 @@ export const discordOutbound: ChannelOutboundAdapter = {
   textChunkLimit: 2000,
   pollMaxOptions: 10,
   resolveTarget: ({ to }) => normalizeDiscordOutboundTarget(to),
+  sendPayload: async ({
+    to,
+    payload,
+    mediaLocalRoots,
+    accountId,
+    deps,
+    replyToId,
+    threadId,
+    identity,
+    silent,
+  }) => {
+    const text = payload.text ?? "";
+    const media = payload.mediaUrl ?? payload.mediaUrls?.[0];
+    if (media) {
+      const send = deps?.sendDiscord ?? sendMessageDiscord;
+      const target = resolveDiscordOutboundTarget({ to, threadId });
+      const result = await send(target, text, {
+        verbose: false,
+        mediaUrl: media,
+        mediaLocalRoots,
+        replyTo: replyToId ?? undefined,
+        accountId: accountId ?? undefined,
+        silent: silent ?? undefined,
+      });
+      return { channel: "discord", ...result };
+    }
+    if (!silent) {
+      const webhookResult = await maybeSendDiscordWebhookText({
+        text,
+        threadId,
+        accountId,
+        identity,
+        replyToId,
+      }).catch(() => null);
+      if (webhookResult) {
+        return { channel: "discord", ...webhookResult };
+      }
+    }
+    const send = deps?.sendDiscord ?? sendMessageDiscord;
+    const target = resolveDiscordOutboundTarget({ to, threadId });
+    const result = await send(target, text, {
+      verbose: false,
+      replyTo: replyToId ?? undefined,
+      accountId: accountId ?? undefined,
+      silent: silent ?? undefined,
+    });
+    return { channel: "discord", ...result };
+  },
   sendText: async ({ to, text, accountId, deps, replyToId, threadId, identity, silent }) => {
     if (!silent) {
       const webhookResult = await maybeSendDiscordWebhookText({
