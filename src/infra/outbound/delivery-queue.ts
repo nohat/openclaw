@@ -222,79 +222,71 @@ export async function enqueueDelivery(
 /** Mark a delivery as successful. */
 export async function ackDelivery(id: string, stateDir?: string): Promise<void> {
   const db = getLifecycleDb(stateDir);
-  try {
-    const row = db.prepare(`SELECT turn_id FROM message_outbox WHERE id=?`).get(id) as
-      | { turn_id: string | null }
-      | undefined;
-    db.prepare(
-      `UPDATE message_outbox
-         SET status='delivered', delivered_at=?, completed_at=?
-       WHERE id=?`,
-    ).run(Date.now(), Date.now(), id);
-    if (row?.turn_id) {
-      await maybeFinalizeTurnDelivered(row.turn_id, stateDir);
-    }
-  } catch (err) {
-    logVerbose(`delivery-queue: ackDelivery failed: ${String(err)}`);
+  const row = db.prepare(`SELECT turn_id FROM message_outbox WHERE id=?`).get(id) as
+    | { turn_id: string | null }
+    | undefined;
+  db.prepare(
+    `UPDATE message_outbox
+       SET status='delivered', delivered_at=?, completed_at=?
+     WHERE id=?`,
+  ).run(Date.now(), Date.now(), id);
+  if (row?.turn_id) {
+    await maybeFinalizeTurnDelivered(row.turn_id, stateDir);
   }
 }
 
 /** Record a failed delivery attempt. */
 export async function failDelivery(id: string, error: string, stateDir?: string): Promise<void> {
   const db = getLifecycleDb(stateDir);
-  try {
-    const row = db
-      .prepare(`SELECT attempt_count, turn_id FROM message_outbox WHERE id=?`)
-      .get(id) as { attempt_count: number; turn_id: string | null } | undefined;
-    if (!row) {
-      return;
-    }
-    const now = Date.now();
-    if (isPermanentDeliveryError(error)) {
-      db.prepare(
-        `UPDATE message_outbox
-           SET status='failed_terminal',
-               error_class='permanent',
-               last_error=?,
-               completed_at=?,
-               terminal_reason=?
-         WHERE id=?`,
-      ).run(error, now, error, id);
-      if (row.turn_id) {
-        await maybeFinalizeTurnFailed(row.turn_id, stateDir);
-      }
-      return;
-    }
-    const nextCount = row.attempt_count + 1;
-    if (nextCount >= MAX_RETRIES) {
-      db.prepare(
-        `UPDATE message_outbox
-           SET status='failed_terminal',
-               error_class='terminal',
-               attempt_count=?,
-               last_error=?,
-               last_attempt_at=?,
-               completed_at=?,
-               terminal_reason=?
-         WHERE id=?`,
-      ).run(nextCount, error, now, now, error, id);
-      if (row.turn_id) {
-        await maybeFinalizeTurnFailed(row.turn_id, stateDir);
-      }
-      return;
-    }
+  const row = db.prepare(`SELECT attempt_count, turn_id FROM message_outbox WHERE id=?`).get(id) as
+    | { attempt_count: number; turn_id: string | null }
+    | undefined;
+  if (!row) {
+    return;
+  }
+  const now = Date.now();
+  if (isPermanentDeliveryError(error)) {
     db.prepare(
       `UPDATE message_outbox
-         SET status='failed_retryable',
+         SET status='failed_terminal',
+             error_class='permanent',
+             last_error=?,
+             completed_at=?,
+             terminal_reason=?
+       WHERE id=?`,
+    ).run(error, now, error, id);
+    if (row.turn_id) {
+      await maybeFinalizeTurnFailed(row.turn_id, stateDir);
+    }
+    return;
+  }
+  const nextCount = row.attempt_count + 1;
+  if (nextCount >= MAX_RETRIES) {
+    db.prepare(
+      `UPDATE message_outbox
+         SET status='failed_terminal',
+             error_class='terminal',
              attempt_count=?,
              last_error=?,
              last_attempt_at=?,
-             next_attempt_at=?
+             completed_at=?,
+             terminal_reason=?
        WHERE id=?`,
-    ).run(nextCount, error, now, now + computeBackoffMs(nextCount), id);
-  } catch (err) {
-    logVerbose(`delivery-queue: failDelivery failed: ${String(err)}`);
+    ).run(nextCount, error, now, now, error, id);
+    if (row.turn_id) {
+      await maybeFinalizeTurnFailed(row.turn_id, stateDir);
+    }
+    return;
   }
+  db.prepare(
+    `UPDATE message_outbox
+       SET status='failed_retryable',
+           attempt_count=?,
+           last_error=?,
+           last_attempt_at=?,
+           next_attempt_at=?
+     WHERE id=?`,
+  ).run(nextCount, error, now, now + computeBackoffMs(nextCount), id);
 }
 
 /** Load pending queue entries eligible for retry now. */
@@ -637,14 +629,27 @@ export async function recoverPendingDeliveries(opts: {
         turnId: entry.turnId,
         skipQueue: true,
       });
-      await ackDelivery(entry.id, opts.stateDir);
+      // Delivery succeeded — ack separately so a DB error doesn't re-trigger delivery.
+      try {
+        await ackDelivery(entry.id, opts.stateDir);
+      } catch (ackErr) {
+        opts.log.error(
+          `Delivery ${entry.id} sent but ack failed (row stays queued — may replay): ${String(ackErr)}`,
+        );
+      }
       recovered += 1;
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      if (isPermanentDeliveryError(message)) {
-        await moveToFailed(entry.id, opts.stateDir);
-      } else {
-        await failDelivery(entry.id, message, opts.stateDir);
+      try {
+        if (isPermanentDeliveryError(message)) {
+          await moveToFailed(entry.id, opts.stateDir);
+        } else {
+          await failDelivery(entry.id, message, opts.stateDir);
+        }
+      } catch (bookkeepErr) {
+        opts.log.error(
+          `Delivery ${entry.id} bookkeeping failed after delivery error: ${String(bookkeepErr)}`,
+        );
       }
       failed += 1;
     }

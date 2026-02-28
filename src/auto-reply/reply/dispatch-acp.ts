@@ -216,6 +216,7 @@ export async function tryDispatchAcpReply(params: {
         sessionKey: params.ctx.SessionKey,
         accountId: params.ctx.AccountId,
         threadId: params.ctx.MessageThreadId,
+        turnId: params.ctx.MessageTurnId,
         cfg: params.cfg,
       });
       if (!result.ok) {
