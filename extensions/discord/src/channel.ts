@@ -302,6 +302,28 @@ export const discordPlugin: ChannelPlugin<ResolvedDiscordAccount> = {
     textChunkLimit: 2000,
     pollMaxOptions: 10,
     resolveTarget: ({ to }) => normalizeDiscordOutboundTarget(to),
+    sendPayload: async (ctx) => {
+      const send = ctx.deps?.sendDiscord ?? getDiscordRuntime().channel.discord.sendMessageDiscord;
+      const media = ctx.payload.mediaUrl ?? ctx.payload.mediaUrls?.[0];
+      if (media) {
+        const result = await send(ctx.to, ctx.text, {
+          verbose: false,
+          mediaUrl: media,
+          mediaLocalRoots: ctx.mediaLocalRoots,
+          replyTo: ctx.replyToId ?? undefined,
+          accountId: ctx.accountId ?? undefined,
+          silent: ctx.silent ?? undefined,
+        });
+        return { channel: "discord", ...result };
+      }
+      const result = await send(ctx.to, ctx.text, {
+        verbose: false,
+        replyTo: ctx.replyToId ?? undefined,
+        accountId: ctx.accountId ?? undefined,
+        silent: ctx.silent ?? undefined,
+      });
+      return { channel: "discord", ...result };
+    },
     sendText: async ({ to, text, accountId, deps, replyToId, silent }) => {
       const send = deps?.sendDiscord ?? getDiscordRuntime().channel.discord.sendMessageDiscord;
       const result = await send(to, text, {
