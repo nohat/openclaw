@@ -23,7 +23,7 @@ const SynologyChatConfigSchema = buildChannelConfigSchema(z.object({}).passthrou
 const activeRouteUnregisters = new Map<string, () => void>();
 
 export function createSynologyChatPlugin() {
-  return {
+  const plugin = {
     id: CHANNEL_ID,
 
     meta: {
@@ -177,6 +177,26 @@ export function createSynologyChatPlugin() {
     outbound: {
       deliveryMode: "gateway" as const,
       textChunkLimit: 2000,
+
+      sendPayload: async (ctx: any) => {
+        const urls = ctx.payload.mediaUrls?.length
+          ? ctx.payload.mediaUrls
+          : ctx.payload.mediaUrl
+            ? [ctx.payload.mediaUrl]
+            : [];
+        if (urls.length > 0) {
+          let lastResult;
+          for (let i = 0; i < urls.length; i++) {
+            lastResult = await plugin.outbound.sendMedia!({
+              ...ctx,
+              text: i === 0 ? (ctx.payload.text ?? "") : "",
+              mediaUrl: urls[i],
+            });
+          }
+          return lastResult!;
+        }
+        return plugin.outbound.sendText!({ ...ctx });
+      },
 
       sendText: async ({ to, text, accountId, account: ctxAccount }: any) => {
         const account: ResolvedSynologyChatAccount = ctxAccount ?? resolveAccount({}, accountId);
@@ -344,4 +364,5 @@ export function createSynologyChatPlugin() {
       ],
     },
   };
+  return plugin;
 }
