@@ -228,6 +228,13 @@ export const signalPlugin: ChannelPlugin<ResolvedSignalAccount> = {
     chunker: (text, limit) => getSignalRuntime().channel.text.chunkText(text, limit),
     chunkerMode: "text",
     textChunkLimit: 4000,
+    sendPayload: async (ctx) => {
+      const media = ctx.payload.mediaUrl ?? ctx.payload.mediaUrls?.[0];
+      if (media) {
+        return signalPlugin.outbound!.sendMedia!({ ...ctx, mediaUrl: media });
+      }
+      return signalPlugin.outbound!.sendText!({ ...ctx });
+    },
     sendText: async ({ cfg, to, text, accountId, deps }) => {
       const send = deps?.sendSignal ?? getSignalRuntime().channel.signal.sendMessageSignal;
       const maxBytes = resolveChannelMediaMaxBytes({
