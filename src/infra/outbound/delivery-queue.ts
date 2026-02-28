@@ -125,6 +125,8 @@ async function maybeFinalizeTurnDelivered(turnId: string, stateDir?: string): Pr
   }
   const db = getLifecycleDb(stateDir);
   try {
+    // Only consider final-dispatch rows for turn finalization — tool/block sends
+    // should not affect whether the turn is considered delivered.
     const row = db
       .prepare(
         `SELECT
@@ -132,7 +134,7 @@ async function maybeFinalizeTurnDelivered(turnId: string, stateDir?: string): Pr
            SUM(CASE WHEN status='delivered' THEN 1 ELSE 0 END) AS delivered_count,
            SUM(CASE WHEN status IN ('failed_terminal','expired') THEN 1 ELSE 0 END) AS failed_count
          FROM message_outbox
-         WHERE turn_id = ?`,
+         WHERE turn_id = ? AND (dispatch_kind IS NULL OR dispatch_kind = 'final')`,
       )
       .get(turnId) as
       | { active_count: number | null; delivered_count: number | null; failed_count: number | null }
@@ -157,13 +159,14 @@ async function maybeFinalizeTurnFailed(turnId: string, stateDir?: string): Promi
   }
   const db = getLifecycleDb(stateDir);
   try {
+    // Only consider final-dispatch rows — tool/block failures don't mean the turn failed.
     const row = db
       .prepare(
         `SELECT
            SUM(CASE WHEN status IN ('queued','failed_retryable') THEN 1 ELSE 0 END) AS active_count,
            SUM(CASE WHEN status IN ('failed_terminal','expired') THEN 1 ELSE 0 END) AS failed_count
          FROM message_outbox
-         WHERE turn_id = ?`,
+         WHERE turn_id = ? AND (dispatch_kind IS NULL OR dispatch_kind = 'final')`,
       )
       .get(turnId) as { active_count: number | null; failed_count: number | null } | undefined;
     if (!row) {
@@ -455,10 +458,20 @@ export function isEntryEligibleForRecoveryRetry(
   return { eligible: false, remainingBackoffMs: nextEligibleAt - now };
 }
 
-/** Summarize outbox statuses for a linked turn. */
-export function getOutboxStatusForTurn(turnId: string, stateDir?: string): OutboxTurnStatus {
+/** Summarize outbox statuses for a linked turn.
+ *  When `finalOnly` is true, only count entries with dispatch_kind='final' or NULL
+ *  (NULL = direct delivery via deliverOutboundPayloads, which is always final).
+ *  This prevents tool/block sends from affecting turn finalization decisions. */
+export function getOutboxStatusForTurn(
+  turnId: string,
+  stateDir?: string,
+  opts?: { finalOnly?: boolean },
+): OutboxTurnStatus {
   const db = getLifecycleDb(stateDir);
   try {
+    const kindFilter = opts?.finalOnly
+      ? ` AND (dispatch_kind IS NULL OR dispatch_kind = 'final')`
+      : "";
     const row = db
       .prepare(
         `SELECT
@@ -466,7 +479,7 @@ export function getOutboxStatusForTurn(turnId: string, stateDir?: string): Outbo
            SUM(CASE WHEN status='delivered' THEN 1 ELSE 0 END) AS delivered_count,
            SUM(CASE WHEN status IN ('failed_terminal','expired') THEN 1 ELSE 0 END) AS failed_count
          FROM message_outbox
-         WHERE turn_id = ?`,
+         WHERE turn_id = ?${kindFilter}`,
       )
       .get(turnId) as
       | {

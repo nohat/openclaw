@@ -110,7 +110,7 @@ export async function startMessageLifecycleWorkers(
       if (isTurnActive(turn.id)) {
         continue;
       }
-      const outbox = getOutboxStatusForTurn(turn.id, params.stateDir);
+      const outbox = getOutboxStatusForTurn(turn.id, params.stateDir, { finalOnly: true });
       if (outbox.queued > 0) {
         continue;
       }

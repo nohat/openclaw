@@ -54,6 +54,9 @@ type DispatchInboundMessageInternalParams = {
   resumeTurnId?: string;
 };
 
+// Recovery limitation: slash commands (e.g. Slack's /openclaw) use a one-time
+// `respond` callback with ~15min TTL. On recovery, `respond` is unavailable so
+// the reply is sent as a DM instead. This is an acceptable tradeoff: DM > lost message.
 function resolveDeliveryQueueContext(params: {
   turnId: string;
   ctx: FinalizedMsgContext;
@@ -147,7 +150,7 @@ async function dispatchInboundMessageInternal({
       // Use outbox status as source of truth for turn finalization. This avoids
       // premature "delivered" when only tool/block sends succeeded but the final
       // reply failed.
-      const status = getOutboxStatusForTurn(turnId);
+      const status = getOutboxStatusForTurn(turnId, undefined, { finalOnly: true });
       if (status.queued > 0) {
         markTurnDeliveryPending(turnId);
       } else if (status.delivered > 0 && status.failed === 0) {
@@ -161,7 +164,7 @@ async function dispatchInboundMessageInternal({
         // Re-check outbox as the authoritative source of truth — this covers both
         // direct sends and ACP-routed turns where the dispatcher counter may not reflect
         // the actual delivery outcome.
-        const refreshed = getOutboxStatusForTurn(turnId);
+        const refreshed = getOutboxStatusForTurn(turnId, undefined, { finalOnly: true });
         if (refreshed.delivered > 0) {
           finalizeTurn(turnId, "delivered");
         } else if (refreshed.failed > 0 && refreshed.queued === 0) {
