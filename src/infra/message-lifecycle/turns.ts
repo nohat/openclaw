@@ -552,27 +552,32 @@ export function abortTurnsForSession(sessionKey: string, opts?: { stateDir?: str
   const db = getLifecycleDb(opts?.stateDir);
   const now = Date.now();
   try {
-    db.prepare(
-      `UPDATE message_turns
-         SET status='aborted',
-             updated_at=?,
-             completed_at=?
-       WHERE session_key=?
-         AND status IN ('accepted','running','delivery_pending','failed_retryable')`,
-    ).run(now, now, sessionKey.trim());
-    // Cancel any pending outbox entries linked to the now-aborted turns so
-    // recoverPendingDeliveries doesn't replay sends for aborted turns.
-    db.prepare(
-      `UPDATE message_outbox
-         SET status='failed_terminal',
-             error_class='terminal',
-             terminal_reason='turn_aborted',
-             completed_at=?
-       WHERE turn_id IN (
-         SELECT id FROM message_turns WHERE session_key=? AND status='aborted'
-       )
-         AND status IN ('queued','failed_retryable')`,
-    ).run(now, sessionKey.trim());
+    // Wrap both UPDATEs in a transaction so turns and their outbox entries
+    // transition atomically — prevents a window where turns are aborted but
+    // outbox rows are still queued and could be replayed by the recovery worker.
+    runLifecycleTransaction(db, () => {
+      db.prepare(
+        `UPDATE message_turns
+           SET status='aborted',
+               updated_at=?,
+               completed_at=?
+         WHERE session_key=?
+           AND status IN ('accepted','running','delivery_pending','failed_retryable')`,
+      ).run(now, now, sessionKey.trim());
+      // Cancel any pending outbox entries linked to the now-aborted turns so
+      // recoverPendingDeliveries doesn't replay sends for aborted turns.
+      db.prepare(
+        `UPDATE message_outbox
+           SET status='failed_terminal',
+               error_class='terminal',
+               terminal_reason='turn_aborted',
+               completed_at=?
+         WHERE turn_id IN (
+           SELECT id FROM message_turns WHERE session_key=? AND status='aborted'
+         )
+           AND status IN ('queued','failed_retryable')`,
+      ).run(now, sessionKey.trim());
+    });
   } catch (err) {
     logVerbose(`message-lifecycle/turns: abortTurnsForSession failed: ${String(err)}`);
   }

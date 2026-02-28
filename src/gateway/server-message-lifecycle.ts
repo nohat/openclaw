@@ -100,21 +100,16 @@ export async function startMessageLifecycleWorkers(
       turnLog.warn(`marked ${stale} stale turn(s) as failed_terminal`);
     }
 
-    const recoverable = listRecoverableTurns({ stateDir: params.stateDir }).slice(
-      0,
-      maxTurnsPerPass,
-    );
-    for (const turn of recoverable) {
-      if (stopped) {
-        return;
-      }
-
-      // Skip turns currently being dispatched on the live path in this process.
-      // After a crash the in-process set is empty, so all orphans are eligible.
+    // First pass: finalize turns whose outbox is already decisive, and collect
+    // turns that need full replay. Filter non-actionable turns (active or
+    // outbox-pending) before applying the batch limit so the cap reflects actual
+    // work items, not skipped entries.
+    const allRecoverable = listRecoverableTurns({ stateDir: params.stateDir });
+    const replayable: typeof allRecoverable = [];
+    for (const turn of allRecoverable) {
       if (isTurnActive(turn.id)) {
         continue;
       }
-
       const outbox = getOutboxStatusForTurn(turn.id, params.stateDir);
       if (outbox.queued > 0) {
         continue;
@@ -126,6 +121,14 @@ export async function startMessageLifecycleWorkers(
       if (outbox.failed > 0) {
         finalizeTurn(turn.id, "failed", { stateDir: params.stateDir });
         continue;
+      }
+      replayable.push(turn);
+    }
+
+    // Apply batch limit after filtering so we process maxTurnsPerPass real replays.
+    for (const turn of replayable.slice(0, maxTurnsPerPass)) {
+      if (stopped) {
+        return;
       }
 
       const ctx = hydrateTurnContext(turn);
@@ -154,7 +157,7 @@ export async function startMessageLifecycleWorkers(
             sessionKey: ctx.SessionKey,
             accountId: ctx.AccountId,
             threadId: ctx.MessageThreadId,
-            cfg: params.cfg,
+            cfg: params.getCfg(),
           });
           if (!result.ok) {
             throw new Error(result.error ?? "route-reply failed");
@@ -171,7 +174,7 @@ export async function startMessageLifecycleWorkers(
         await dispatchResumedTurn({
           turnId: turn.id,
           ctx,
-          cfg: params.cfg,
+          cfg: params.getCfg(),
           dispatcher,
         });
       } catch (err) {
