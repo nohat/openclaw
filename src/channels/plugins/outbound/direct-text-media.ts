@@ -91,6 +91,30 @@ export function createDirectTextMediaOutbound<
     chunker: chunkText,
     chunkerMode: "text",
     textChunkLimit: 4000,
+    sendPayload: async ({ cfg, to, payload, accountId, deps, replyToId }) => {
+      const media = payload.mediaUrl ?? payload.mediaUrls?.[0];
+      if (media) {
+        return await sendDirect({
+          cfg,
+          to,
+          text: payload.text ?? "",
+          accountId,
+          deps,
+          replyToId,
+          mediaUrl: media,
+          buildOptions: params.buildMediaOptions,
+        });
+      }
+      return await sendDirect({
+        cfg,
+        to,
+        text: payload.text ?? "",
+        accountId,
+        deps,
+        replyToId,
+        buildOptions: params.buildTextOptions,
+      });
+    },
     sendText: async ({ cfg, to, text, accountId, deps, replyToId }) => {
       return await sendDirect({
         cfg,

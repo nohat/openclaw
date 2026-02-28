@@ -93,6 +93,28 @@ export const slackOutbound: ChannelOutboundAdapter = {
   deliveryMode: "direct",
   chunker: null,
   textChunkLimit: 4000,
+  sendPayload: async ({
+    to,
+    payload,
+    mediaLocalRoots,
+    accountId,
+    deps,
+    replyToId,
+    threadId,
+    identity,
+  }) => {
+    const media = payload.mediaUrl ?? payload.mediaUrls?.[0];
+    return await sendSlackOutboundMessage({
+      to,
+      text: payload.text ?? "",
+      ...(media ? { mediaUrl: media, mediaLocalRoots } : {}),
+      accountId,
+      deps,
+      replyToId,
+      threadId,
+      identity,
+    });
+  },
   sendText: async ({ to, text, accountId, deps, replyToId, threadId, identity }) => {
     return await sendSlackOutboundMessage({
       to,
