@@ -91,21 +91,29 @@ export const discordOutbound: ChannelOutboundAdapter = {
     identity,
     silent,
   }) => {
-    const text = payload.text ?? "";
-    const media = payload.mediaUrl ?? payload.mediaUrls?.[0];
-    if (media) {
+    const urls = payload.mediaUrls?.length
+      ? payload.mediaUrls
+      : payload.mediaUrl
+        ? [payload.mediaUrl]
+        : [];
+    if (urls.length > 0) {
       const send = deps?.sendDiscord ?? sendMessageDiscord;
       const target = resolveDiscordOutboundTarget({ to, threadId });
-      const result = await send(target, text, {
-        verbose: false,
-        mediaUrl: media,
-        mediaLocalRoots,
-        replyTo: replyToId ?? undefined,
-        accountId: accountId ?? undefined,
-        silent: silent ?? undefined,
-      });
-      return { channel: "discord", ...result };
+      let lastResult;
+      for (let i = 0; i < urls.length; i++) {
+        const result = await send(target, i === 0 ? (payload.text ?? "") : "", {
+          verbose: false,
+          mediaUrl: urls[i],
+          mediaLocalRoots,
+          replyTo: replyToId ?? undefined,
+          accountId: accountId ?? undefined,
+          silent: silent ?? undefined,
+        });
+        lastResult = { channel: "discord" as const, ...result };
+      }
+      return lastResult;
     }
+    const text = payload.text ?? "";
     if (!silent) {
       const webhookResult = await maybeSendDiscordWebhookText({
         text,

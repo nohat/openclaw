@@ -103,11 +103,31 @@ export const slackOutbound: ChannelOutboundAdapter = {
     threadId,
     identity,
   }) => {
-    const media = payload.mediaUrl ?? payload.mediaUrls?.[0];
+    const urls = payload.mediaUrls?.length
+      ? payload.mediaUrls
+      : payload.mediaUrl
+        ? [payload.mediaUrl]
+        : [];
+    if (urls.length > 0) {
+      let lastResult;
+      for (let i = 0; i < urls.length; i++) {
+        lastResult = await sendSlackOutboundMessage({
+          to,
+          text: i === 0 ? (payload.text ?? "") : "",
+          mediaUrl: urls[i],
+          mediaLocalRoots,
+          accountId,
+          deps,
+          replyToId,
+          threadId,
+          identity,
+        });
+      }
+      return lastResult;
+    }
     return await sendSlackOutboundMessage({
       to,
       text: payload.text ?? "",
-      ...(media ? { mediaUrl: media, mediaLocalRoots } : {}),
       accountId,
       deps,
       replyToId,

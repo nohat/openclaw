@@ -303,11 +303,30 @@ export const zaloPlugin: ChannelPlugin<ResolvedZaloAccount> = {
     chunkerMode: "text",
     textChunkLimit: 2000,
     sendPayload: async ({ to, payload, accountId, cfg }) => {
-      const media = payload.mediaUrl ?? payload.mediaUrls?.[0];
-      const text = payload.text ?? "";
-      const result = await sendMessageZalo(to, text, {
+      const urls = payload.mediaUrls?.length
+        ? payload.mediaUrls
+        : payload.mediaUrl
+          ? [payload.mediaUrl]
+          : [];
+      if (urls.length > 0) {
+        let lastResult;
+        for (let i = 0; i < urls.length; i++) {
+          const result = await sendMessageZalo(to, i === 0 ? (payload.text ?? "") : "", {
+            accountId: accountId ?? undefined,
+            mediaUrl: urls[i],
+            cfg: cfg,
+          });
+          lastResult = {
+            channel: "zalo" as const,
+            ok: result.ok,
+            messageId: result.messageId ?? "",
+            error: result.error ? new Error(result.error) : undefined,
+          };
+        }
+        return lastResult!;
+      }
+      const result = await sendMessageZalo(to, payload.text ?? "", {
         accountId: accountId ?? undefined,
-        ...(media ? { mediaUrl: media } : {}),
         cfg: cfg,
       });
       return {
