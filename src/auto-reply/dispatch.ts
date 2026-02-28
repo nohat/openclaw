@@ -136,6 +136,9 @@ async function dispatchInboundMessageInternal({
           dispatcher,
           replyOptions,
           replyResolver,
+          // Resumed turns must bypass inbound dedupe — the original MessageSid may
+          // still be in the in-memory cache, causing the replay to be silently skipped.
+          skipInboundDedupe: skipAcceptTurn,
         }),
     });
 
@@ -154,9 +157,15 @@ async function dispatchInboundMessageInternal({
       } else if (attemptedFinal > 0 && !result.queuedFinal) {
         recordTurnRecoveryFailure(turnId, "final delivery did not queue successfully");
       } else if (attemptedFinal > 0 && result.queuedFinal) {
-        // Fail-open for routed/direct sends where provider success is known but outbox
-        // persistence may be unavailable.
-        finalizeTurn(turnId, "delivered");
+        // Fail-open: only mark delivered if at least one provider send actually succeeded.
+        // queuedFinal just means the dispatcher accepted the payload — the actual send
+        // may have failed silently via onError.
+        const actualSends = dispatcher.getDeliveryStats?.()?.successfulSends ?? 0;
+        if (actualSends > 0) {
+          finalizeTurn(turnId, "delivered");
+        } else {
+          recordTurnRecoveryFailure(turnId, "final send queued but no successful sends");
+        }
       } else {
         // No outbox rows and no final attempted — e.g. command-only turn with no reply.
         finalizeTurn(turnId, "delivered");
