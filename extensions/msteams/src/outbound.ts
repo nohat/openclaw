@@ -9,6 +9,22 @@ export const msteamsOutbound: ChannelOutboundAdapter = {
   chunkerMode: "markdown",
   textChunkLimit: 4000,
   pollMaxOptions: 12,
+  sendPayload: async (ctx) => {
+    const media = ctx.payload.mediaUrl ?? ctx.payload.mediaUrls?.[0];
+    if (media) {
+      const send =
+        ctx.deps?.sendMSTeams ??
+        ((to: string, text: string, opts?: { mediaUrl?: string }) =>
+          sendMessageMSTeams({ cfg: ctx.cfg, to, text, mediaUrl: opts?.mediaUrl }));
+      const result = await send(ctx.to, ctx.text, { mediaUrl: media });
+      return { channel: "msteams", ...result };
+    }
+    const send =
+      ctx.deps?.sendMSTeams ??
+      ((to: string, text: string) => sendMessageMSTeams({ cfg: ctx.cfg, to, text }));
+    const result = await send(ctx.to, ctx.text);
+    return { channel: "msteams", ...result };
+  },
   sendText: async ({ cfg, to, text, deps }) => {
     const send = deps?.sendMSTeams ?? ((to, text) => sendMessageMSTeams({ cfg, to, text }));
     const result = await send(to, text);

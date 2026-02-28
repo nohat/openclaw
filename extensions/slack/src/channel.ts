@@ -325,6 +325,22 @@ export const slackPlugin: ChannelPlugin<ResolvedSlackAccount> = {
     deliveryMode: "direct",
     chunker: null,
     textChunkLimit: 4000,
+    sendPayload: async (ctx) => {
+      const send = ctx.deps?.sendSlack ?? getSlackRuntime().channel.slack.sendMessageSlack;
+      const account = resolveSlackAccount({ cfg: ctx.cfg, accountId: ctx.accountId });
+      const token = getTokenForOperation(account, "write");
+      const botToken = account.botToken?.trim();
+      const tokenOverride = token && token !== botToken ? token : undefined;
+      const threadTsValue = ctx.replyToId ?? ctx.threadId;
+      const media = ctx.payload.mediaUrl ?? ctx.payload.mediaUrls?.[0];
+      const result = await send(ctx.to, ctx.text, {
+        ...(media ? { mediaUrl: media } : {}),
+        threadTs: threadTsValue != null ? String(threadTsValue) : undefined,
+        accountId: ctx.accountId ?? undefined,
+        ...(tokenOverride ? { token: tokenOverride } : {}),
+      });
+      return { channel: "slack", ...result };
+    },
     sendText: async ({ to, text, accountId, deps, replyToId, threadId, cfg }) => {
       const send = deps?.sendSlack ?? getSlackRuntime().channel.slack.sendMessageSlack;
       const account = resolveSlackAccount({ cfg, accountId });

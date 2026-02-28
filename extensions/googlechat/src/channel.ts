@@ -402,6 +402,57 @@ export const googlechatPlugin: ChannelPlugin<ResolvedGoogleChatAccount> = {
         error: missingTargetError("Google Chat", "<spaces/{space}|users/{user}>"),
       };
     },
+    sendPayload: async (ctx) => {
+      const media = ctx.payload.mediaUrl ?? ctx.payload.mediaUrls?.[0];
+      if (media) {
+        const account = resolveGoogleChatAccount({ cfg: ctx.cfg, accountId: ctx.accountId });
+        const space = await resolveGoogleChatOutboundSpace({ account, target: ctx.to });
+        const thread = (ctx.threadId ?? ctx.replyToId ?? undefined) as string | undefined;
+        const runtime = getGoogleChatRuntime();
+        const maxBytes = resolveChannelMediaMaxBytes({
+          cfg: ctx.cfg,
+          resolveChannelLimitMb: ({ cfg, accountId }) =>
+            (
+              cfg.channels?.["googlechat"] as
+                | { accounts?: Record<string, { mediaMaxMb?: number }>; mediaMaxMb?: number }
+                | undefined
+            )?.accounts?.[accountId]?.mediaMaxMb ??
+            (cfg.channels?.["googlechat"] as { mediaMaxMb?: number } | undefined)?.mediaMaxMb,
+          accountId: ctx.accountId,
+        });
+        const loaded = await runtime.channel.media.fetchRemoteMedia({
+          url: media,
+          maxBytes: maxBytes ?? (account.config.mediaMaxMb ?? 20) * 1024 * 1024,
+        });
+        const upload = await uploadGoogleChatAttachment({
+          account,
+          space,
+          filename: loaded.fileName ?? "attachment",
+          buffer: loaded.buffer,
+          contentType: loaded.contentType,
+        });
+        const result = await sendGoogleChatMessage({
+          account,
+          space,
+          text: ctx.text,
+          thread,
+          attachments: upload.attachmentUploadToken
+            ? [
+                {
+                  attachmentUploadToken: upload.attachmentUploadToken,
+                  contentName: loaded.fileName,
+                },
+              ]
+            : undefined,
+        });
+        return { channel: "googlechat", messageId: result?.messageName ?? "", chatId: space };
+      }
+      const account = resolveGoogleChatAccount({ cfg: ctx.cfg, accountId: ctx.accountId });
+      const space = await resolveGoogleChatOutboundSpace({ account, target: ctx.to });
+      const thread = (ctx.threadId ?? ctx.replyToId ?? undefined) as string | undefined;
+      const result = await sendGoogleChatMessage({ account, space, text: ctx.text, thread });
+      return { channel: "googlechat", messageId: result?.messageName ?? "", chatId: space };
+    },
     sendText: async ({ cfg, to, text, accountId, replyToId, threadId }) => {
       const account = resolveGoogleChatAccount({
         cfg: cfg,
