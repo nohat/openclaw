@@ -296,6 +296,22 @@ export const ircPlugin: ChannelPlugin<ResolvedIrcAccount, IrcProbe> = {
     chunker: (text, limit) => getIrcRuntime().channel.text.chunkMarkdownText(text, limit),
     chunkerMode: "markdown",
     textChunkLimit: 350,
+    sendPayload: async (ctx) => {
+      const media = ctx.payload.mediaUrl ?? ctx.payload.mediaUrls?.[0];
+      if (media) {
+        const combined = `${ctx.text}\n\nAttachment: ${media}`;
+        const result = await sendMessageIrc(ctx.to, combined, {
+          accountId: ctx.accountId ?? undefined,
+          replyTo: ctx.replyToId ?? undefined,
+        });
+        return { channel: "irc", ...result };
+      }
+      const result = await sendMessageIrc(ctx.to, ctx.text, {
+        accountId: ctx.accountId ?? undefined,
+        replyTo: ctx.replyToId ?? undefined,
+      });
+      return { channel: "irc", ...result };
+    },
     sendText: async ({ to, text, accountId, replyToId }) => {
       const result = await sendMessageIrc(to, text, {
         accountId: accountId ?? undefined,
