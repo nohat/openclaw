@@ -157,8 +157,22 @@ const tlonOutbound: ChannelOutboundAdapter = {
 };
 
 tlonOutbound.sendPayload = async (ctx) => {
-  const media = ctx.payload.mediaUrl ?? ctx.payload.mediaUrls?.[0];
-  if (media) return tlonOutbound.sendMedia!({ ...ctx, mediaUrl: media });
+  const urls = ctx.payload.mediaUrls?.length
+    ? ctx.payload.mediaUrls
+    : ctx.payload.mediaUrl
+      ? [ctx.payload.mediaUrl]
+      : [];
+  if (urls.length > 0) {
+    let lastResult;
+    for (let i = 0; i < urls.length; i++) {
+      lastResult = await tlonOutbound.sendMedia!({
+        ...ctx,
+        text: i === 0 ? (ctx.payload.text ?? "") : "",
+        mediaUrl: urls[i],
+      });
+    }
+    return lastResult!;
+  }
   return tlonOutbound.sendText!({ ...ctx });
 };
 

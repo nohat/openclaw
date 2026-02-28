@@ -44,42 +44,47 @@ export const feishuOutbound: ChannelOutboundAdapter = {
   chunkerMode: "markdown",
   textChunkLimit: 4000,
   sendPayload: async (ctx) => {
-    const media = ctx.payload.mediaUrl ?? ctx.payload.mediaUrls?.[0];
-    if (media) {
+    const urls = ctx.payload.mediaUrls?.length
+      ? ctx.payload.mediaUrls
+      : ctx.payload.mediaUrl
+        ? [ctx.payload.mediaUrl]
+        : [];
+    if (urls.length > 0) {
       // Send text first if provided
-      if (ctx.text?.trim()) {
+      if (ctx.payload.text?.trim()) {
         await sendMessageFeishu({
           cfg: ctx.cfg,
           to: ctx.to,
-          text: ctx.text,
+          text: ctx.payload.text,
           accountId: ctx.accountId ?? undefined,
         });
       }
-      try {
-        const result = await sendMediaFeishu({
-          cfg: ctx.cfg,
-          to: ctx.to,
-          mediaUrl: media,
-          accountId: ctx.accountId ?? undefined,
-          mediaLocalRoots: ctx.mediaLocalRoots,
-        });
-        return { channel: "feishu", ...result };
-      } catch (err) {
-        console.error(`[feishu] sendMediaFeishu failed:`, err);
-        const fallbackText = `\u{1F4CE} ${media}`;
-        const result = await sendMessageFeishu({
-          cfg: ctx.cfg,
-          to: ctx.to,
-          text: fallbackText,
-          accountId: ctx.accountId ?? undefined,
-        });
-        return { channel: "feishu", ...result };
+      let lastResult;
+      for (const url of urls) {
+        try {
+          lastResult = await sendMediaFeishu({
+            cfg: ctx.cfg,
+            to: ctx.to,
+            mediaUrl: url,
+            accountId: ctx.accountId ?? undefined,
+            mediaLocalRoots: ctx.mediaLocalRoots,
+          });
+        } catch (err) {
+          console.error(`[feishu] sendMediaFeishu failed:`, err);
+          lastResult = await sendMessageFeishu({
+            cfg: ctx.cfg,
+            to: ctx.to,
+            text: `\u{1F4CE} ${url}`,
+            accountId: ctx.accountId ?? undefined,
+          });
+        }
       }
+      return { channel: "feishu", ...lastResult! };
     }
     const result = await sendMessageFeishu({
       cfg: ctx.cfg,
       to: ctx.to,
-      text: ctx.text ?? "",
+      text: ctx.payload.text ?? "",
       accountId: ctx.accountId ?? undefined,
     });
     return { channel: "feishu", ...result };

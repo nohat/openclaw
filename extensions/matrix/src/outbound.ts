@@ -8,12 +8,31 @@ export const matrixOutbound: ChannelOutboundAdapter = {
   chunkerMode: "markdown",
   textChunkLimit: 4000,
   sendPayload: async (ctx) => {
-    const media = ctx.payload.mediaUrl ?? ctx.payload.mediaUrls?.[0];
+    const urls = ctx.payload.mediaUrls?.length
+      ? ctx.payload.mediaUrls
+      : ctx.payload.mediaUrl
+        ? [ctx.payload.mediaUrl]
+        : [];
     const send = ctx.deps?.sendMatrix ?? sendMessageMatrix;
     const resolvedThreadId =
       ctx.threadId !== undefined && ctx.threadId !== null ? String(ctx.threadId) : undefined;
-    const result = await send(ctx.to, ctx.text, {
-      mediaUrl: media ?? undefined,
+    if (urls.length > 0) {
+      let lastResult;
+      for (let i = 0; i < urls.length; i++) {
+        lastResult = await send(ctx.to, i === 0 ? (ctx.payload.text ?? "") : "", {
+          mediaUrl: urls[i],
+          replyToId: ctx.replyToId ?? undefined,
+          threadId: resolvedThreadId,
+          accountId: ctx.accountId ?? undefined,
+        });
+      }
+      return {
+        channel: "matrix",
+        messageId: lastResult!.messageId,
+        roomId: lastResult!.roomId,
+      };
+    }
+    const result = await send(ctx.to, ctx.payload.text ?? "", {
       replyToId: ctx.replyToId ?? undefined,
       threadId: resolvedThreadId,
       accountId: ctx.accountId ?? undefined,

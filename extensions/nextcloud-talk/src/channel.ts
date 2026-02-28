@@ -263,16 +263,22 @@ export const nextcloudTalkPlugin: ChannelPlugin<ResolvedNextcloudTalkAccount> = 
     chunkerMode: "markdown",
     textChunkLimit: 4000,
     sendPayload: async (ctx) => {
-      const media = ctx.payload.mediaUrl ?? ctx.payload.mediaUrls?.[0];
-      if (media) {
-        const messageWithMedia = `${ctx.text}\n\nAttachment: ${media}`;
-        const result = await sendMessageNextcloudTalk(ctx.to, messageWithMedia, {
+      const urls = ctx.payload.mediaUrls?.length
+        ? ctx.payload.mediaUrls
+        : ctx.payload.mediaUrl
+          ? [ctx.payload.mediaUrl]
+          : [];
+      if (urls.length > 0) {
+        // Build combined text with all attachment URLs
+        const attachments = urls.map((u) => `Attachment: ${u}`).join("\n");
+        const combined = ctx.payload.text ? `${ctx.payload.text}\n\n${attachments}` : attachments;
+        const result = await sendMessageNextcloudTalk(ctx.to, combined, {
           accountId: ctx.accountId ?? undefined,
           replyTo: ctx.replyToId ?? undefined,
         });
         return { channel: "nextcloud-talk", ...result };
       }
-      const result = await sendMessageNextcloudTalk(ctx.to, ctx.text, {
+      const result = await sendMessageNextcloudTalk(ctx.to, ctx.payload.text ?? "", {
         accountId: ctx.accountId ?? undefined,
         replyTo: ctx.replyToId ?? undefined,
       });
@@ -286,7 +292,11 @@ export const nextcloudTalkPlugin: ChannelPlugin<ResolvedNextcloudTalkAccount> = 
       return { channel: "nextcloud-talk", ...result };
     },
     sendMedia: async ({ to, text, mediaUrl, accountId, replyToId }) => {
-      const messageWithMedia = mediaUrl ? `${text}\n\nAttachment: ${mediaUrl}` : text;
+      const messageWithMedia = mediaUrl
+        ? text
+          ? `${text}\n\nAttachment: ${mediaUrl}`
+          : `Attachment: ${mediaUrl}`
+        : (text ?? "");
       const result = await sendMessageNextcloudTalk(to, messageWithMedia, {
         accountId: accountId ?? undefined,
         replyTo: replyToId ?? undefined,

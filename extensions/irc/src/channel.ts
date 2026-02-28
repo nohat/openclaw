@@ -297,16 +297,22 @@ export const ircPlugin: ChannelPlugin<ResolvedIrcAccount, IrcProbe> = {
     chunkerMode: "markdown",
     textChunkLimit: 350,
     sendPayload: async (ctx) => {
-      const media = ctx.payload.mediaUrl ?? ctx.payload.mediaUrls?.[0];
-      if (media) {
-        const combined = `${ctx.text}\n\nAttachment: ${media}`;
+      const urls = ctx.payload.mediaUrls?.length
+        ? ctx.payload.mediaUrls
+        : ctx.payload.mediaUrl
+          ? [ctx.payload.mediaUrl]
+          : [];
+      if (urls.length > 0) {
+        // Build combined text with all attachment URLs
+        const attachments = urls.map((u) => `Attachment: ${u}`).join("\n");
+        const combined = ctx.payload.text ? `${ctx.payload.text}\n\n${attachments}` : attachments;
         const result = await sendMessageIrc(ctx.to, combined, {
           accountId: ctx.accountId ?? undefined,
           replyTo: ctx.replyToId ?? undefined,
         });
         return { channel: "irc", ...result };
       }
-      const result = await sendMessageIrc(ctx.to, ctx.text, {
+      const result = await sendMessageIrc(ctx.to, ctx.payload.text ?? "", {
         accountId: ctx.accountId ?? undefined,
         replyTo: ctx.replyToId ?? undefined,
       });
@@ -320,7 +326,11 @@ export const ircPlugin: ChannelPlugin<ResolvedIrcAccount, IrcProbe> = {
       return { channel: "irc", ...result };
     },
     sendMedia: async ({ to, text, mediaUrl, accountId, replyToId }) => {
-      const combined = mediaUrl ? `${text}\n\nAttachment: ${mediaUrl}` : text;
+      const combined = mediaUrl
+        ? text
+          ? `${text}\n\nAttachment: ${mediaUrl}`
+          : `Attachment: ${mediaUrl}`
+        : (text ?? "");
       const result = await sendMessageIrc(to, combined, {
         accountId: accountId ?? undefined,
         replyTo: replyToId ?? undefined,
