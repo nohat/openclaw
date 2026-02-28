@@ -161,13 +161,19 @@ function createPluginHandler(
     threadId: overrides?.threadId ?? baseCtx.threadId,
   });
   const sendText = hasSendTextMedia
-    ? (text: string, overrides?: { replyToId?: string | null; threadId?: string | number | null }) =>
+    ? (
+        text: string,
+        overrides?: { replyToId?: string | null; threadId?: string | number | null },
+      ) =>
         outbound.sendText!({
           ...resolveCtx(overrides),
           text,
         })
-    : (text: string, overrides?: { replyToId?: string | null; threadId?: string | number | null }) =>
-        outbound.sendFinal!({
+    : (
+        text: string,
+        overrides?: { replyToId?: string | null; threadId?: string | number | null },
+      ) =>
+        outbound.sendFinal({
           ...resolveCtx(overrides),
           text,
           mediaUrl: undefined,
@@ -189,7 +195,7 @@ function createPluginHandler(
         mediaUrl: string,
         overrides?: { replyToId?: string | null; threadId?: string | number | null },
       ) =>
-        outbound.sendFinal!({
+        outbound.sendFinal({
           ...resolveCtx(overrides),
           text: caption,
           mediaUrl,
@@ -201,7 +207,7 @@ function createPluginHandler(
     textChunkLimit: outbound.textChunkLimit,
     sendPayload: outbound.sendFinal
       ? async (payload, overrides) =>
-          outbound.sendFinal!({
+          outbound.sendFinal({
             ...resolveCtx(overrides),
             text: payload.text ?? "",
             mediaUrl: payload.mediaUrl,
